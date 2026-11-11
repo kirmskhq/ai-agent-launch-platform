@@ -29,9 +29,29 @@ class Graph(Protocol):
     def invoke(self, state: dict, /) -> dict: ...
 
 
+def _package(agent_dir: Path) -> str:
+    """Make the agent folder an importable package, so its files can import each other
+    (`from .policy import ...`). Points the package at this exact folder every time and drops
+    modules loaded from another folder of the same name."""
+    if "agent_code" not in sys.modules:
+        root = ModuleType("agent_code")
+        root.__path__ = []
+        sys.modules["agent_code"] = root
+    name = f"agent_code.{agent_dir.name.replace('-', '_')}"
+    folder = str(agent_dir.resolve())
+    package = sys.modules.get(name)
+    if package is None or list(package.__path__) != [folder]:
+        for loaded in [m for m in sys.modules if m.startswith(name + ".")]:
+            del sys.modules[loaded]
+        package = ModuleType(name)
+        package.__path__ = [folder]
+        sys.modules[name] = package
+    return name
+
+
 def _import(agent_dir: Path, filename: str) -> ModuleType:
     path = agent_dir / filename
-    module_name = f"agent_code.{agent_dir.name.replace('-', '_')}.{path.stem}"
+    module_name = f"{_package(agent_dir)}.{path.stem}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")

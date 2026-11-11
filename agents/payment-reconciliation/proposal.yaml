@@ -1,0 +1,96 @@
+name: payment-reconciliation
+title: Payment reconciliation
+department: Finance operations
+owner: {name: Sofia Lindgren, role: Head of finance operations}
+problem: >-
+  About 6,000 incoming payments a month are matched to invoices by hand. Lines with messy
+  references wait two to three days, customers get payment reminders for invoices they have
+  already paid, and the month-end close slips.
+
+process:
+  steps:
+    - id: pick-line
+      does: Take the next unmatched line from the bank statement
+      by: Finance clerk
+      inputs: [bank statement line]
+      outputs: [amount, payer name, reference]
+      systems: [bank portal]
+    - id: find-payer
+      does: Find the customer from the payer name and list their open invoices
+      by: Finance clerk
+      inputs: [payer name]
+      outputs: [open invoices]
+      systems: [billing system]
+    - id: match
+      does: Decide which open invoices the payment settles, allowing for a bank fee
+      by: Finance clerk
+      inputs: [amount, reference, open invoices]
+      outputs: [matched invoices, bank fee]
+      systems: [billing system]
+      decision: which-invoices
+    - id: record
+      does: Record the match and mark the invoices paid, or park the line for a senior clerk
+      by: Finance clerk
+      inputs: [matched invoices, bank fee]
+      outputs: [paid invoices or parked line]
+      systems: [billing system]
+      decision: fee-or-short
+  decisions:
+    - id: which-invoices
+      question: Which open invoices does this payment settle?
+      rule: >-
+        Take the invoices the reference names as paid now. If it names none, match only if
+        exactly one open invoice has exactly the paid amount. Never match an invoice the
+        reference does not name.
+    - id: fee-or-short
+      question: Is the difference a bank fee or a short payment?
+      rule: >-
+        A difference of up to 25, and no more than 3% of the invoices, is a bank fee and is
+        written off. Anything larger, any overpayment and any part payment goes to a senior
+        clerk.
+  exceptions:
+    - when: The payer is not a known customer
+      then: Park the line and ask the bank for the payer's details
+    - when: Two open invoices have the same amount and the reference names neither
+      then: Park the line and ask the customer which invoice they paid
+    - when: The customer pays part of an invoice
+      then: A senior clerk records the part payment and agrees the rest with the customer
+  signed_off: {by: Sofia Lindgren, signed_on: 2026-09-29}
+
+reality_test:
+  staff: [Amara Osei, Lukas Brandt]
+
+error:
+  cost: 15
+  reversible: true
+  how_undone: >-
+    A clerk unmatches the line and applies it again; the customer's balance is corrected
+    before the next statement goes out.
+
+autonomy: act_alone
+
+baseline:
+  cases_per_month: 6000
+  minutes_per_case: 4
+  staff_cost_per_hour: 45
+
+metric:
+  name: Statement lines matched within one working day
+  unit: percent
+  baseline: 55
+  target: 90
+
+guardrail:
+  name: Customer balances found wrong at month end
+  unit: percent
+  current: 0.4
+  must_stay: below
+  limit: 1.0
+
+decision:
+  outcome: build
+  reason: >-
+    The written rules settle more than eight in ten past lines, two clerks agree on 93%, and a
+    wrong match costs 15 and is undone in minutes, so the agent may act alone.
+  by: Sofia Lindgren
+  decided_on: 2026-10-02

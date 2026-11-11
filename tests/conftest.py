@@ -6,6 +6,8 @@ import pytest
 import yaml
 
 from agent_platform import gateway
+from agent_platform.settings import ROOT
+from sandbox.store import STORE
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -48,6 +50,8 @@ def workspace(tmp_path, monkeypatch) -> Path:
     config.mkdir()
     (config / "models.yaml").write_text(yaml.safe_dump(MODELS), encoding="utf-8")
     (config / "platform.yaml").write_text("currency: USD\n", encoding="utf-8")
+    shutil.copy(ROOT / "config" / "tools.yaml", config / "tools.yaml")
+    STORE.reset()
     monkeypatch.setenv("AGENTS_DIR", str(agents))
     monkeypatch.setenv("AGENTS_REPORTS_DIR", str(tmp_path / "reports"))
     monkeypatch.setenv("AGENTS_STATE_DIR", str(tmp_path / "var"))

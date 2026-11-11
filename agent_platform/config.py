@@ -7,7 +7,7 @@ is a change in one file.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -73,6 +73,17 @@ class Provider(_Strict):
     api_key_env: str | None = None
     max_concurrency: int = Field(default=4, ge=1, description="Requests in flight at once")
     retries: int = Field(default=4, ge=0, description="Retries on rate limits and outages")
+    max_backoff_s: float = Field(
+        default=20, gt=0, description="Longest wait between retries; the wait doubles up to it"
+    )
+    max_wait_s: float = Field(
+        default=300,
+        gt=0,
+        description="Longest Retry-After the gateway waits out; a longer one fails at once",
+    )
+    requests_per_minute: int | None = Field(
+        default=None, ge=1, description="Space requests out to stay under the provider's limit"
+    )
     timeout_s: float = Field(default=60, gt=0)
 
     @model_validator(mode="after")
@@ -86,6 +97,9 @@ class ModelSpec(_Strict):
     provider: str
     model: str = Field(description="The provider's own model id")
     price_usd_per_1m: Price
+    options: dict[str, Any] = Field(
+        default={}, description="Extra request fields this model needs, such as reasoning_effort"
+    )
 
 
 class ModelsConfig(_Strict):

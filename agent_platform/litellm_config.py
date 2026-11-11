@@ -31,6 +31,7 @@ def build() -> str:
                     "api_key": f"os.environ/{provider.api_key_env}",
                     "max_parallel_requests": provider.max_concurrency,
                     "timeout": provider.timeout_s,
+                    **spec.options,
                 },
             }
         )

@@ -1,0 +1,94 @@
+name: refund-requests
+title: Refund requests
+department: Merchant support
+owner: {name: Mateo Alvarez, role: Head of merchant support}
+problem: >-
+  About 1,500 refund requests a month wait in one shared inbox. Simple requests that the
+  policy settles in a minute wait two days behind hard ones, and merchants chase us by phone.
+
+process:
+  steps:
+    - id: open
+      does: Open the request and the order it refers to
+      by: Support specialist
+      inputs: [refund request]
+      outputs: [request, order with charges and delivery dates]
+      systems: [support inbox, order system]
+    - id: numbers
+      does: Check the amount against what was paid and already refunded
+      by: Support specialist
+      inputs: [request, order]
+      outputs: [amount left to refund]
+      systems: [order system]
+      decision: amount
+    - id: reason
+      does: Read the message, name the reason and apply the matching policy rule
+      by: Support specialist
+      inputs: [message, order dates, charges, photo]
+      outputs: [in policy or not, with the reason]
+      decision: policy
+    - id: act
+      does: Pay small refunds, send larger ones to a team lead, or decline with the reason
+      by: Support specialist
+      inputs: [decision]
+      outputs: [refund paid, approval request or decline sent]
+      systems: [payments console]
+      decision: who-approves
+  decisions:
+    - id: amount
+      question: Is the amount within what is left to refund?
+      rule: A refund never exceeds the order amount minus what was already refunded.
+    - id: policy
+      question: Does the request meet the refund policy?
+      rule: >-
+        Apply the written refund policy: charged twice, never arrived after 3 days, arrived
+        damaged with a photo within 30 days, changed their mind within 14 days. Anything
+        else goes to a specialist.
+    - id: who-approves
+      question: Who approves the refund?
+      rule: Refunds of 50 or less within policy are paid at once; larger ones need a team lead.
+  exceptions:
+    - when: The message mixes several reasons or describes a fault after use
+      then: A specialist calls the merchant
+    - when: A damaged item has no delivery recorded
+      then: A specialist checks with the courier first
+  signed_off: {by: Mateo Alvarez, signed_on: 2026-10-06}
+
+reality_test:
+  staff: [Hannah Kim, Yusuf Demir]
+
+error:
+  cost: 25
+  reversible: true
+  how_undone: >-
+    A refund paid in error is cancelled within 24 hours, before it settles; a wrong decline is
+    reversed when the merchant replies.
+
+autonomy: act_alone
+
+baseline:
+  cases_per_month: 1500
+  minutes_per_case: 6
+  staff_cost_per_hour: 38
+
+metric:
+  name: Refund requests decided within one working day
+  unit: percent
+  baseline: 40
+  target: 85
+
+guardrail:
+  name: Refunds paid outside policy, monthly audit sample
+  unit: percent
+  current: 1.5
+  must_stay: below
+  limit: 3
+
+decision:
+  outcome: build
+  reason: >-
+    The policy settles more than nine in ten past requests, two specialists agree on 97%, and a
+    wrong refund of 50 or less can be cancelled before it settles. Larger refunds stay with a
+    team lead.
+  by: Mateo Alvarez
+  decided_on: 2026-10-09

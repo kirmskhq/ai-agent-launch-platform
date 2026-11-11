@@ -139,6 +139,8 @@ def print_report(r) -> None:
     )
     for reason in r.reasons:
         print(f"     reason: {reason}")
+    if r.measured_on == "mock":
+        print("     note: measured on the mock model; this never makes an agent accepted")
     for case in r.cases:
         if not case.correct:
             run = case.runs[0]
@@ -288,6 +290,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sandbox(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    print(f"Harbourline Payments sandbox: http://{args.host}:{args.port}/docs  (Ctrl+C to stop)")
+    uvicorn.run("sandbox.app:app", host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     from agent_platform.passport import json_schema
 
@@ -354,6 +364,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("sandbox", help="Start the fictional payments company's API")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8100)
+    p.set_defaults(func=cmd_sandbox)
 
     p = sub.add_parser("schema", help="Print the passport JSON Schema")
     p.set_defaults(func=cmd_schema)

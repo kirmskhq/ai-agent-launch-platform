@@ -1,0 +1,32 @@
+name: payment-reconciliation
+title: Payment reconciliation
+department: Finance operations
+owner: Sofia Lindgren
+replaces: >-
+  Finance clerks matching each incoming bank payment to the open invoices it pays, including
+  payments with messy references, several invoices at once or a bank fee deducted.
+baseline:
+  cases_per_month: 6000
+  minutes_per_case: 4
+  staff_cost_per_hour: 45
+error_cost: 15
+metric:
+  name: Statement lines matched within one working day
+  unit: percent
+  baseline: 55
+  target: 90
+model: gpt-4.1-mini
+autonomy: act_alone
+tools:
+  - list_unmatched_statement_lines
+  - find_customer
+  - list_open_invoices
+  - match_statement_line
+schedule: "0 6 * * 1-5"
+lifecycle: live
+exam:
+  scoring: fields
+  fields: [invoice_ids, fee]
+  min_accuracy: 0.85
+  min_holdout_cases: 40
+  max_cost_per_case: 0.01

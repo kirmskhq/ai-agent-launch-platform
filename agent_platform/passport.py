@@ -104,6 +104,7 @@ class Passport(_Strict):
         description="advise: a person acts on the answer; act_after_approval: the agent acts "
         "once a person approves; act_alone: the agent acts. Capped by the readiness check.",
     )
+    tools: list[str] = Field(default=[], description="Tools from config/tools.yaml")
     schedule: str | None = Field(default=None, description="cron, 5 fields, UTC")
     lifecycle: Literal["draft", "live", "retired"] = Field(
         default="draft",

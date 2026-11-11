@@ -1,0 +1,32 @@
+name: refund-requests
+title: Refund requests
+department: Merchant support
+owner: Mateo Alvarez
+replaces: >-
+  Support specialists checking each refund request against the written refund policy, paying
+  small ones, sending larger ones to a team lead and declining the rest with the reason.
+baseline:
+  cases_per_month: 1500
+  minutes_per_case: 6
+  staff_cost_per_hour: 38
+error_cost: 25
+metric:
+  name: Refund requests decided within one working day
+  unit: percent
+  baseline: 40
+  target: 85
+model: gpt-4.1-mini
+autonomy: act_alone
+tools:
+  - list_pending_refund_requests
+  - get_order
+  - issue_refund
+  - decline_refund
+schedule: "0 * * * *"
+lifecycle: live
+exam:
+  scoring: fields
+  fields: [decision, amount, reason]
+  min_accuracy: 0.88
+  min_holdout_cases: 40
+  max_cost_per_case: 0.01

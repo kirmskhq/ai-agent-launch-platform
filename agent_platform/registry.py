@@ -35,6 +35,7 @@ from agent_platform.readiness import (
     passport_conflicts,
 )
 from agent_platform.settings import paths
+from agent_platform.tools import passport_problems as tool_problems
 
 Status = Literal["draft", "retired", "no_exam", "not_accepted", "running"]
 STATUS_LABELS: dict[Status, str] = {
@@ -118,6 +119,7 @@ def check_agent(agent_dir: Path) -> list[str]:
             f"model {passport.model!r} is not in config/models.yaml "
             f"(known: {', '.join(sorted(cfg.models))})"
         )
+    problems += tool_problems(passport.tools, passport.autonomy)
     problems += check_readiness(agent_dir, passport)
     problems += check_code(agent_dir)
     problems += check_case_sets(agent_dir, passport.exam.min_holdout_cases)

@@ -1,0 +1,43 @@
+# Tools agents may be granted (passport field `tools`). Policy as code:
+# - an agent can call only the tools its passport lists;
+# - a tool that writes can be granted only to an agent whose autonomy is above "advise";
+# - during an exam no tool that writes can run at all.
+# `function` is module:function; the module is imported when the tool is first called.
+
+tools:
+  find_customer:
+    function: sandbox.tools:find_customer
+    writes: false
+    description: Find the customer whose name matches a payer name on a bank statement.
+  list_open_invoices:
+    function: sandbox.tools:list_open_invoices
+    writes: false
+    description: Open invoices of one customer, oldest first.
+  list_unmatched_statement_lines:
+    function: sandbox.tools:list_unmatched_statement_lines
+    writes: false
+    description: Bank statement lines not yet matched to invoices.
+  get_order:
+    function: sandbox.tools:get_order
+    writes: false
+    description: One order with its charges, expected and actual delivery dates and refunds.
+  list_pending_refund_requests:
+    function: sandbox.tools:list_pending_refund_requests
+    writes: false
+    description: Refund requests waiting for a decision.
+  get_refund_policy:
+    function: sandbox.tools:get_refund_policy
+    writes: false
+    description: The written refund policy.
+  match_statement_line:
+    function: sandbox.tools:match_statement_line
+    writes: true
+    description: Record that a statement line pays given invoices, less a bank fee.
+  issue_refund:
+    function: sandbox.tools:issue_refund
+    writes: true
+    description: Pay a refund. Cancellable for 24 hours, before it settles.
+  decline_refund:
+    function: sandbox.tools:decline_refund
+    writes: true
+    description: Decline a refund request with the reason the customer will see.

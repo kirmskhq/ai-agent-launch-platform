@@ -15,7 +15,7 @@ metric:
   unit: percent
   baseline: 55
   target: 90
-model: gpt-4.1-mini
+model: qwen3.6
 autonomy: act_alone
 tools:
   - list_unmatched_statement_lines

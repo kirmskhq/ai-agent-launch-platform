@@ -17,6 +17,12 @@ providers:
     api_key_env: OPENROUTER_API_KEY
     max_concurrency: 4
     retries: 4
+  neuraldeep:
+    base_url: https://api.neuraldeep.tech/v1
+    api_key_env: NEURALDEEP_API_KEY
+    # The free tier allows 3 requests at once; more come back as 429.
+    max_concurrency: 3
+    retries: 6
   mock:
     # A stand-in for tests and runs without a key. Never leaves the machine, costs nothing,
     # and an exam on it never makes an agent accepted.
@@ -35,6 +41,14 @@ models:
     provider: openrouter
     model: meta-llama/llama-3.3-70b-instruct
     price_usd_per_1m: {input: 0.13, output: 0.40}
+  qwen3.6:
+    provider: neuraldeep
+    model: qwen3.6-35b-a3b-noreason
+    price_usd_per_1m: {input: 0.09, output: 0.50}
+  gpt-oss-120b:
+    provider: neuraldeep
+    model: gpt-oss-120b
+    price_usd_per_1m: {input: 0.08, output: 0.31}
   mock:
     provider: mock
     model: mock

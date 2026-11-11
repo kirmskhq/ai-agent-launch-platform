@@ -1,7 +1,8 @@
 # Checks on every pull request and on main:
 #   lint, format, passports and case files, LiteLLM config in sync, tests (all without a key).
-# Exams on real models run only when a model key secret is set (OPENAI_API_KEY or
-# OPENROUTER_API_KEY); otherwise the job says so and skips them.
+# Exams on real models run only when a model key secret is set (NEURALDEEP_API_KEY,
+# OPENAI_API_KEY or OPENROUTER_API_KEY); otherwise the job says so and skips them.
+# A neuraldeep key stored as OPENAI_API_KEY is picked up too.
 name: ci
 
 on:
@@ -43,6 +44,7 @@ jobs:
     needs: checks
     runs-on: ubuntu-latest
     env:
+      NEURALDEEP_API_KEY: ${{ secrets.NEURALDEEP_API_KEY || secrets.OPENAI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
@@ -52,10 +54,10 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen --python 3.12
       - name: No model key
-        if: env.OPENAI_API_KEY == '' && env.OPENROUTER_API_KEY == ''
+        if: env.NEURALDEEP_API_KEY == '' && env.OPENAI_API_KEY == '' && env.OPENROUTER_API_KEY == ''
         run: echo "::notice::No model key secret is set; real-model exams were skipped."
       - name: Holdout exams on each passport's model
-        if: env.OPENAI_API_KEY != '' || env.OPENROUTER_API_KEY != ''
+        if: env.NEURALDEEP_API_KEY != '' || env.OPENAI_API_KEY != '' || env.OPENROUTER_API_KEY != ''
         run: |
           set -o pipefail
           uv run agents exam --skip-without-key | tee exam.txt

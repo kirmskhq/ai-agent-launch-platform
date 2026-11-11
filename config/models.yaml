@@ -1,0 +1,41 @@
+# Models an agent's passport may name (field `model`).
+# Agents only know the alias. Provider, address, key variable and price live here.
+# Every provider speaks the OpenAI chat API, directly or through the LiteLLM proxy
+# (see deploy/litellm.yaml, generated from this file).
+#
+# Prices are list prices in USD per 1M tokens, used to report cost per case.
+# Check them against the provider's price page before relying on a cost figure.
+
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    max_concurrency: 8
+    retries: 4
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    max_concurrency: 4
+    retries: 4
+  mock:
+    # A stand-in for tests and runs without a key. Never leaves the machine, costs nothing,
+    # and an exam on it never makes an agent accepted.
+    kind: mock
+
+models:
+  gpt-4.1-mini:
+    provider: openai
+    model: gpt-4.1-mini
+    price_usd_per_1m: {input: 0.40, output: 1.60}
+  gpt-4.1:
+    provider: openai
+    model: gpt-4.1
+    price_usd_per_1m: {input: 2.00, output: 8.00}
+  llama-3.3-70b:
+    provider: openrouter
+    model: meta-llama/llama-3.3-70b-instruct
+    price_usd_per_1m: {input: 0.13, output: 0.40}
+  mock:
+    provider: mock
+    model: mock
+    price_usd_per_1m: {input: 0, output: 0}

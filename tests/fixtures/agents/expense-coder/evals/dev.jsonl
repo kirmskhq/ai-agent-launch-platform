@@ -1,0 +1,5 @@
+{"id": "d1", "input": {"description": "Train ticket to Leeds", "amount": 85.0}, "expected": {"category": "travel"}}
+{"id": "d2", "input": {"description": "Team lunch", "amount": 120.0}, "expected": {"category": "meals"}}
+{"id": "d3", "input": {"description": "USB keyboard", "amount": 35.0}, "expected": {"category": "equipment"}}
+{"id": "d4", "input": {"description": "Conference booth", "amount": 2500.0}, "expected": {"handover": true}}
+{"id": "d5", "input": {"description": "Misc", "amount": 10.0}, "expected": {"handover": true}}

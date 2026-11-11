@@ -1,0 +1,11 @@
+# Platform-wide settings.
+
+# Every amount in passports, reports and the catalogue is in this currency (ISO 4217).
+currency: USD
+
+# Model prices in models.yaml are in USD, as providers publish them.
+# usd_rate converts them: units of `currency` per 1 USD. Must be 1.0 when currency is USD.
+usd_rate: 1.0
+
+# Working hours in one full-time staff month, used to express time saved as staff months.
+hours_per_staff_month: 160

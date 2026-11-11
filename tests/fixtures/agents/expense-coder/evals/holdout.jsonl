@@ -1,0 +1,12 @@
+{"id": "h01", "input": {"description": "Taxi from the client office", "amount": 31.5}, "expected": {"category": "travel"}}
+{"id": "h02", "input": {"description": "Flight to Lisbon", "amount": 240.0}, "expected": {"category": "travel"}}
+{"id": "h03", "input": {"description": "Hotel, two nights", "amount": 310.0}, "expected": {"category": "travel"}}
+{"id": "h04", "input": {"description": "Laptop for new analyst", "amount": 950.0}, "expected": {"category": "equipment"}}
+{"id": "h05", "input": {"description": "Second monitor", "amount": 180.0}, "expected": {"category": "equipment"}}
+{"id": "h06", "input": {"description": "Client dinner", "amount": 260.0}, "expected": {"category": "meals"}}
+{"id": "h07", "input": {"description": "Coffee for workshop", "amount": 45.0}, "expected": {"category": "meals"}}
+{"id": "h08", "input": {"description": "Lunch with auditors", "amount": 90.0}, "expected": {"category": "meals"}}
+{"id": "h09", "input": {"description": "Office furniture", "amount": 3200.0}, "expected": {"handover": true}}
+{"id": "h10", "input": {"description": "Sundry", "amount": 12.0}, "expected": {"handover": true}}
+{"id": "h11", "input": {"description": "Laptop stand and dinner", "amount": 70.0}, "expected": {"category": "meals"}}
+{"id": "h12", "input": {"description": "Parking at the station", "amount": 15.0}, "expected": {"category": "travel"}}

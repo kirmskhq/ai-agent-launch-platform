@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Agent catalogue</h1>
+<p class="lead">Every agent a department has proposed, and whether it is allowed to run.
+An agent runs only after it passes its exam on real past cases.</p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Agents</div><div class="v">{{ summary.total }}</div></div>
+  <div class="tile"><div class="k">Running</div><div class="v">{{ summary.running }}</div></div>
+  <div class="tile">
+    <div class="k">Projected monthly effect of running agents (exam, lower bound)</div>
+    <div class="v">{{ summary.projected_net | money }}</div>
+  </div>
+</div>
+
+{% if not agents %}
+<p>No agents yet. Add a folder under <code>agents/</code> with an <code>agent.yaml</code>.</p>
+{% else %}
+<div class="wrap">
+<table>
+  <tr>
+    <th>Agent</th><th>Department</th><th>Status</th><th>Model</th>
+    <th class="num">Accuracy, lower bound</th><th class="num">Needed</th>
+    <th class="num">Projected effect / month</th>
+  </tr>
+  {% for a in agents %}
+  <tr>
+    <td><a href="/agents/{{ a.name }}">{{ a.passport.title if a.passport else a.name }}</a>
+      <div class="label">{{ a.name }}</div></td>
+    <td>{{ a.passport.department if a.passport else "-" }}</td>
+    <td><span class="status s-{{ a.status }}">{{ a.status_label }}</span>
+      {% if a.reasons and a.status in ("not_accepted", "no_exam") %}
+      <div class="label">{{ a.reasons[0] }}</div>{% endif %}</td>
+    <td>{{ a.passport.model if a.passport else "-" }}</td>
+    <td class="num">{{ (a.report.accuracy_lower_bound | pct(1)) if a.report else "-" }}</td>
+    <td class="num">{{ (a.passport.exam.min_accuracy | pct(1)) if a.passport else "-" }}</td>
+    <td class="num">{{ (a.report.effect_at_lower_bound.net | money) if a.report else "-" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+<p class="label">Projected effect comes from the exam, at the lower confidence bound of
+accuracy. All amounts in the platform currency; all times in UTC.
+JSON: <a href="/api/agents">/api/agents</a></p>
+{% endblock %}

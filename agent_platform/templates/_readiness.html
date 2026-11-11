@@ -1,0 +1,34 @@
+{# Readiness checkpoint for one proposal. Expects `rd` (a Readiness). #}
+<h2>Readiness checkpoint</h2>
+<p class="label">Checked before any code was written. Each check passes or fails on its own.</p>
+{% if rd.problems %}
+<ul class="reasons">{% for problem in rd.problems %}<li>{{ problem }}</li>{% endfor %}</ul>
+{% endif %}
+{% if rd.checks %}
+<div class="wrap">
+<table>
+  <tr><th>Check</th><th>Result</th><th>Detail</th></tr>
+  {% for c in rd.checks %}
+  <tr><td>{{ c.label }}</td>
+    <td><span class="status {{ 's-running' if c.passed else 's-not_accepted' }}">{{ "pass" if c.passed else "fail" }}</span></td>
+    <td>{{ c.detail }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% if rd.reality %}
+<div class="tiles">
+  <div class="tile"><div class="k">Coverage (settled by written rules)</div><div class="v">{{ rd.reality.coverage | pct }}</div></div>
+  <div class="tile"><div class="k">Agreement between two staff</div><div class="v">{{ rd.reality.agreement | pct }}</div>
+    <div class="label">ceiling for the exam threshold</div></div>
+  <div class="tile"><div class="k">Most autonomy allowed</div><div class="v">{{ rd.max_autonomy | replace("_", " ") }}</div></div>
+</div>
+{% endif %}
+{% if rd.recommended %}
+<dl class="kv">
+  <dt>Platform recommends</dt><dd>{{ rd.recommended | replace("_", " ") }}</dd>
+  {% for reason in rd.reasons %}<dt></dt><dd>{{ reason }}</dd>{% endfor %}
+  <dt>Written decision</dt>
+  <dd>{% if rd.decision %}{{ rd.decision.outcome | replace("_", " ") }} &middot; {{ rd.decision.by }}, {{ rd.decision.decided_on }}<br>{{ rd.decision.reason }}{% else %}not written yet{% endif %}</dd>
+</dl>
+{% endif %}

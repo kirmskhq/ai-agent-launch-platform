@@ -22,10 +22,13 @@
   <dt>Staff cost per hour</dt><dd>{{ p.baseline.staff_cost_per_hour | money(2) }}</dd>
   <dt>Cost of one error</dt><dd>{{ p.error_cost | money(2) }}</dd>
   <dt>Break-even accuracy</dt><dd>{{ p.break_even_accuracy | pct(1) }}</dd>
+  <dt>Autonomy</dt><dd>{{ p.autonomy | replace("_", " ") }}</dd>
   <dt>Metric</dt><dd>{{ p.metric.name }}: {{ p.metric.baseline }} &rarr; {{ p.metric.target }} {{ p.metric.unit }}</dd>
   <dt>Schedule</dt><dd>{{ p.schedule ~ " (UTC)" if p.schedule else "on request only" }}</dd>
 </dl>
 {% endif %}
+
+{% if a.readiness and a.readiness.proposal %}{% set rd = a.readiness %}{% include "_readiness.html" %}{% endif %}
 
 {% if r %}
 <h2>Acceptance exam</h2>

@@ -4,6 +4,8 @@
     GET  /agents/{name}              one agent
     GET  /api/agents                 catalogue as JSON
     GET  /api/agents/{name}          one agent as JSON
+    GET  /proposals/{name}           a proposal at the readiness checkpoint
+    GET  /api/proposals              proposals as JSON
     POST /api/agents/{name}/invoke   one call: {"input": {...}}             bearer token
     POST /api/agents/{name}/run      the agent's scheduled job, right now     bearer token
     GET  /healthz                    liveness
@@ -26,8 +28,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from agent_platform.catalogue import render_agent, render_index
-from agent_platform.registry import AgentRecord, find, records
+from agent_platform.catalogue import render_agent, render_index, render_proposal
+from agent_platform.readiness import as_dict as readiness_dict
+from agent_platform.registry import AgentRecord, find, find_proposal, proposals, records
 from agent_platform.runner import NotRunnable, invoke, run_job
 from agent_platform.scheduler import Scheduler
 from agent_platform.settings import load_dotenv
@@ -62,6 +65,8 @@ def _summary(a: AgentRecord) -> dict:
         "model": p.model if p else None,
         "status": a.status,
         "reasons": a.reasons,
+        "autonomy": p.autonomy if p else None,
+        "readiness": readiness_dict(a.readiness) if a.readiness else None,
         "exam": None
         if r is None
         else {
@@ -109,11 +114,22 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return render_index(records())
+        return render_index(records(), proposals())
 
     @app.get("/agents/{name}", response_class=HTMLResponse)
     def agent_page(name: str) -> str:
         return render_agent(_agent(name))
+
+    @app.get("/proposals/{name}", response_class=HTMLResponse)
+    def proposal_page(name: str) -> str:
+        readiness = find_proposal(name)
+        if readiness is None:
+            raise HTTPException(404, f"no proposal called {name!r}")
+        return render_proposal(readiness)
+
+    @app.get("/api/proposals")
+    def api_proposals() -> list[dict]:
+        return [readiness_dict(r) for r in proposals()]
 
     @app.get("/api/agents")
     def api_agents() -> list[dict]:

@@ -5,6 +5,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from agent_platform.config import platform_config
+from agent_platform.production import measured
 from agent_platform.readiness import Readiness
 from agent_platform.registry import AgentRecord
 from agent_platform.runner import recent_runs
@@ -37,6 +38,7 @@ def _env() -> Environment:
     env.filters["money"] = _money
     env.filters["pct"] = _pct
     env.globals["outcome_labels"] = OUTCOME_LABELS
+    env.globals["measured"] = measured
     return env
 
 

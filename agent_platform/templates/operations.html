@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review decisions</title>
+<style>
+body {font: 16px system-ui; max-width: 1000px; margin: 40px auto; padding: 20px; color: #233545}
+button,input {font: inherit; padding: 8px; margin: 4px} article {border-top: 1px solid #ccd; padding: 20px 0}
+pre {white-space: pre-wrap; overflow-wrap: anywhere} #message {color: #8b3525}
+</style>
+<a href="/">Catalogue</a>
+<h1>Review decisions and approve actions</h1>
+<label>Bearer token <input id="token" type="password" autocomplete="off"></label>
+<label>Staff name <input id="staff" autocomplete="name"></label>
+<button id="load">Load decisions</button>
+<p id="message" role="status"></p>
+<main id="decisions"></main>
+<script>
+const message = document.querySelector('#message');
+async function request(path, body) {
+  const response = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: {'Authorization': 'Bearer ' + document.querySelector('#token').value,
+              'Content-Type': 'application/json'},
+    ...(body ? {body: JSON.stringify(body)} : {})
+  });
+  const value = await response.json();
+  if (!response.ok) throw Error(value.detail || 'Request failed');
+  return value;
+}
+async function load() {
+  try {
+    const rows = await request('/api/decisions');
+    const root = document.querySelector('#decisions');
+    root.replaceChildren();
+    for (const row of rows) {
+      const article = document.createElement('article');
+      const heading = document.createElement('h2');
+      heading.textContent = row.agent + ' — ' + row.state;
+      article.append(heading);
+      const content = document.createElement('pre');
+      content.textContent = JSON.stringify({created_at: row.created_at, input: row.payload,
+        answer: row.output, action: row.action, result: row.action_result}, null, 2);
+      article.append(content);
+      const actions = [['Right', 'review', {correct: true}], ['Wrong', 'review', {correct: false}]];
+      if (row.state === 'pending') actions.push(['Approve', 'approval', {reject: false}], ['Reject', 'approval', {reject: true}]);
+      for (const [label, endpoint, body] of actions) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.onclick = async () => {
+          button.disabled = true;
+          try {
+            await request('/api/decisions/' + row.id + '/' + endpoint,
+              {...body, staff: document.querySelector('#staff').value});
+            await load();
+          } catch (error) {message.textContent = error.message; button.disabled = false;}
+        };
+        article.append(button);
+      }
+      root.append(article);
+    }
+    message.textContent = rows.length + ' decisions loaded';
+  } catch (error) {message.textContent = error.message;}
+}
+document.querySelector('#load').onclick = load;
+</script>
+</html>

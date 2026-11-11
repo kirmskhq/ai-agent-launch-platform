@@ -2,6 +2,7 @@
 and refund requests. `reset()` puts everything back to the seed state."""
 
 import threading
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 
@@ -227,7 +228,24 @@ class Store:
             self.refunds = {r.id: deepcopy(r) for r in REFUND_REQUESTS}
 
 
-STORE = Store()
+TENANT = ContextVar("sandbox_tenant", default="default")
+_stores = {"default": Store()}
+_stores_lock = threading.RLock()
+
+
+class TenantStore:
+    """Select the isolated sandbox company for the current authenticated tenant."""
+
+    def __getattr__(self, name):
+        with _stores_lock:
+            tenant = TENANT.get()
+            if tenant not in _stores:
+                _stores[tenant] = Store()
+            store = _stores[tenant]
+        return getattr(store, name)
+
+
+STORE = TenantStore()
 
 
 def as_dict(obj) -> dict:

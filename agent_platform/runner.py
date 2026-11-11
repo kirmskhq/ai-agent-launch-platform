@@ -20,6 +20,7 @@ from agent_platform.loader import load_graph, load_job
 from agent_platform.registry import AgentRecord, find
 from agent_platform.settings import paths
 from agent_platform.tools import granted
+from sandbox.store import TENANT
 
 
 class NotRunnable(RuntimeError):
@@ -33,6 +34,7 @@ class Result:
     cost: float
     model_calls: int
     latency_s: float
+    decision_id: str = ""
 
 
 def now_utc() -> str:
@@ -65,14 +67,30 @@ def _call(graph: Any, model: str, payload: dict) -> tuple[dict, bool, Ledger, fl
     return output, fell_back, ledger, time.perf_counter() - started
 
 
-def invoke(name: str, payload: dict) -> Result:
+def invoke(name: str, payload: dict, *, tenant: str = "default") -> Result:
+    token = TENANT.set(tenant)
+    try:
+        return _invoke(name, payload, tenant=tenant)
+    finally:
+        TENANT.reset(token)
+
+
+def _invoke(name: str, payload: dict, *, tenant: str) -> Result:
     agent = require_running(name)
     assert agent.passport is not None
     graph = load_graph(agent.path)
     # Answering reads at most; acting on an answer is a separate, approved step.
     with granted(name, agent.passport.tools, can_write=False):
         output, fell_back, ledger, latency = _call(graph, agent.passport.model, payload)
-    return Result(output, fell_back, ledger.cost, len(ledger.calls), latency)
+    from agent_platform.production import execute, record
+
+    decision_id = record(agent, payload, output, ledger.cost, fell_back, tenant)
+    from agent_platform.production import decisions
+
+    decision = next(d for d in decisions(tenant, name) if d["id"] == decision_id)
+    if decision["state"] == "ready":
+        execute(decision_id, tenant)
+    return Result(output, fell_back, ledger.cost, len(ledger.calls), latency, decision_id)
 
 
 def _runs_file(name: str) -> Path:
@@ -94,25 +112,27 @@ def recent_runs(name: str, n: int = 10) -> list[dict]:
     return [json.loads(line) for line in reversed(lines[-n:])]
 
 
-def run_job(name: str, *, trigger: str = "manual") -> dict:
+def run_job(name: str, *, trigger: str = "manual", tenant: str = "default") -> dict:
     """job.collect() -> the agent on every input -> a summary in the run history."""
     agent = require_running(name)
     assert agent.passport is not None
     job = load_job(agent.path)
     if job is None:
         raise NotRunnable(f"{name} has no job.py, so there is nothing to run on a schedule")
-    graph = load_graph(agent.path)
-
     entry: dict[str, Any] = {"started_at": now_utc(), "trigger": trigger}
     started = time.perf_counter()
     answered = handed_over = fell_back = 0
     cost = 0.0
-    with granted(name, agent.passport.tools, can_write=False):
-        payloads = list(job.collect())
-    for payload in payloads:
+    token = TENANT.set(tenant)
+    try:
         with granted(name, agent.passport.tools, can_write=False):
-            output, failed, ledger, _ = _call(graph, agent.passport.model, payload)
-        cost += ledger.cost
+            payloads = list(job.collect())
+    finally:
+        TENANT.reset(token)
+    for payload in payloads:
+        result = invoke(name, payload, tenant=tenant)
+        output, failed = result.output, result.fell_back
+        cost += result.cost
         fell_back += failed
         if is_handover(output):
             handed_over += 1

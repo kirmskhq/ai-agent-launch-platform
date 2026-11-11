@@ -21,7 +21,7 @@ An agent runs only after it passes its exam on real past cases.</p>
   <tr>
     <th>Agent</th><th>Department</th><th>Status</th><th>Model</th>
     <th class="num">Accuracy, lower bound</th><th class="num">Needed</th>
-    <th class="num">Projected effect / month</th>
+    <th class="num">Projected effect / month</th><th>Measured effect, observed period</th>
   </tr>
   {% for a in agents %}
   <tr>
@@ -35,6 +35,7 @@ An agent runs only after it passes its exam on real past cases.</p>
     <td class="num">{{ (a.report.accuracy_lower_bound | pct(1)) if a.report else "-" }}</td>
     <td class="num">{{ (a.passport.exam.min_accuracy | pct(1)) if a.passport else "-" }}</td>
     <td class="num">{{ (a.report.effect_at_lower_bound.net | money) if a.report else "-" }}</td>
+    <td>{{ measured(a.name).net | money }}<div class="label">{{ measured(a.name).reviewed }} reviewed calls</div></td>
   </tr>
   {% endfor %}
 </table>

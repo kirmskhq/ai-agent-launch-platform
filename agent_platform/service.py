@@ -17,16 +17,18 @@ The scheduler starts with the service when AGENTS_SCHEDULER=1.
 """
 
 import hmac
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_platform.catalogue import render_agent, render_index, render_proposal
 from agent_platform.readiness import as_dict as readiness_dict
@@ -41,14 +43,31 @@ _bearer = HTTPBearer(auto_error=False)
 
 def require_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> None:
+) -> str:
     expected = os.environ.get("AGENTS_API_TOKEN", "")
+    tenants = json.loads(os.environ.get("AGENTS_TENANT_TOKENS", "{}"))
+    if credentials:
+        for tenant, token in tenants.items():
+            if hmac.compare_digest(credentials.credentials.encode(), token.encode()):
+                return tenant
     if not expected:
         raise HTTPException(503, "AGENTS_API_TOKEN is not set; running agents is disabled")
     if credentials is None or not hmac.compare_digest(
         credentials.credentials.encode(), expected.encode()
     ):
         raise HTTPException(401, "missing or wrong bearer token")
+
+    return "default"
+
+
+class ReviewRequest(BaseModel):
+    correct: bool
+    staff: str = Field(min_length=1)
+
+
+class ApprovalRequest(BaseModel):
+    staff: str = Field(min_length=1)
+    reject: bool = False
 
 
 class InvokeRequest(BaseModel):
@@ -108,6 +127,10 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
 
     app = FastAPI(title="Agent launch platform", lifespan=lifespan)
 
+    @app.get("/operations", response_class=HTMLResponse)
+    def operations_page():
+        return (Path(__file__).parent / "templates" / "operations.html").read_text(encoding="utf-8")
+
     @app.get("/healthz")
     def healthz() -> dict:
         return {"ok": True}
@@ -140,13 +163,16 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
         return _summary(_agent(name))
 
     @app.post("/api/agents/{name}/invoke", dependencies=[Depends(require_token)])
-    async def api_invoke(name: str, body: InvokeRequest) -> dict:
+    async def api_invoke(
+        name: str, body: InvokeRequest, tenant: str = Depends(require_token)
+    ) -> dict:
         _agent(name)
         try:
-            result = await run_in_threadpool(invoke, name, body.input)
+            result = await run_in_threadpool(invoke, name, body.input, tenant=tenant)
         except NotRunnable as e:
             raise HTTPException(409, str(e)) from e
         return {
+            "decision_id": result.decision_id,
             "output": result.output,
             "fell_back_to_person": result.fell_back,
             "cost": round(result.cost, 6),
@@ -155,11 +181,41 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
         }
 
     @app.post("/api/agents/{name}/run", dependencies=[Depends(require_token)])
-    async def api_run(name: str) -> dict:
+    async def api_run(name: str, tenant: str = Depends(require_token)) -> dict:
         _agent(name)
         try:
-            return await run_in_threadpool(run_job, name, trigger="api")
+            return await run_in_threadpool(run_job, name, trigger="api", tenant=tenant)
         except NotRunnable as e:
             raise HTTPException(409, str(e)) from e
+
+    from agent_platform.production import decisions, execute, measured, review
+
+    @app.get("/api/decisions")
+    def api_decisions(tenant: str = Depends(require_token)) -> list[dict]:
+        return decisions(tenant)
+
+    @app.post("/api/decisions/{decision_id}/review")
+    def api_review(decision_id: str, body: ReviewRequest, tenant: str = Depends(require_token)):
+        try:
+            review(decision_id, body.correct, body.staff, tenant)
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        return {"ok": True}
+
+    @app.post("/api/decisions/{decision_id}/approval")
+    def api_approval(decision_id: str, body: ApprovalRequest, tenant: str = Depends(require_token)):
+        try:
+            return execute(decision_id, tenant, approved_by=body.staff, reject=body.reject)
+        except LookupError as error:
+            raise HTTPException(404, str(error)) from error
+        except (ValueError, NotRunnable) as error:
+            raise HTTPException(409, str(error)) from error
+
+    @app.get("/api/agents/{name}/value")
+    def api_value(name: str, weeks: int = 4, tenant: str = Depends(require_token)):
+        _agent(name)
+        if weeks < 1:
+            raise HTTPException(422, "weeks must be positive")
+        return measured(name, tenant, weeks)
 
     return app

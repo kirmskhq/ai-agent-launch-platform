@@ -101,7 +101,9 @@ def check_code(agent_dir: Path) -> list[str]:
     return problems
 
 
-def fingerprint(agent_dir: Path, passport: Passport) -> str:
+def fingerprint(
+    agent_dir: Path, passport: Passport, *, runtime_sources: dict[str, bytes] | None = None
+) -> str:
     """A hash of everything that decides the exam result.
 
     The agent's code, its holdout cases and the passport fields the exam depends on. If any of
@@ -144,7 +146,10 @@ def fingerprint(agent_dir: Path, passport: Passport) -> str:
         "sandbox/tools.py",
         "sandbox/store.py",
     ):
-        h.update((ROOT / relative).read_bytes().replace(b"\r\n", b"\n"))
+        source = (runtime_sources or {}).get(relative)
+        if source is None:
+            source = (ROOT / relative).read_bytes()
+        h.update(source.replace(b"\r\n", b"\n"))
     exam_inputs = passport.model_dump(
         include={"model", "exam", "baseline", "error_cost", "autonomy", "tools"}
     )

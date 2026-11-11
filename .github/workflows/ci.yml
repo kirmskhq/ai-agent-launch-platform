@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -58,28 +60,33 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
       - run: uv sync --frozen --python 3.12
-      - name: Restore matching accepted reports from the latest completed branch run
+      - name: Restore matching exam progress from the latest completed branch run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          exam_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          previous_run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
-            --branch "$exam_branch" --status completed --limit 1 --json databaseId \
-            --jq '.[0].databaseId // empty')
-          if [ -n "$previous_run" ]; then
-            candidate_dir="$RUNNER_TEMP/exam-reuse"
-            if gh run download "$previous_run" --repo "$GITHUB_REPOSITORY" \
-              --name exam-reports --dir "$candidate_dir"; then
-              for report in "$candidate_dir"/*.json; do
-                [ -f "$report" ] || continue
-                uv run agents accept-report "$report" || true
-              done
+          candidate_dir="$RUNNER_TEMP/exam-reuse-current"
+          if ! gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name exam-reports --dir "$candidate_dir"; then
+            exam_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+            previous_run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+              --branch "$exam_branch" --status completed --limit 1 --json databaseId \
+              --jq '.[0].databaseId // empty')
+            candidate_dir="$RUNNER_TEMP/exam-reuse-previous"
+            if [ -n "$previous_run" ]; then
+              gh run download "$previous_run" --repo "$GITHUB_REPOSITORY" \
+                --name exam-reports --dir "$candidate_dir" || true
             fi
           fi
+          for report in "$candidate_dir"/*.json; do
+            [ -f "$report" ] || continue
+            uv run agents import-exam "$report" || true
+          done
       - name: No model key
         if: env.GROQ_API_KEY == '' && env.OPENAI_API_KEY == '' && env.OPENROUTER_API_KEY == ''
         run: echo "::notice::No model key secret is set; real-model exams were skipped."
@@ -87,7 +94,7 @@ jobs:
         if: env.GROQ_API_KEY != '' || env.OPENAI_API_KEY != '' || env.OPENROUTER_API_KEY != ''
         run: |
           set -o pipefail
-          uv run agents exam --skip-without-key --reuse-accepted | tee exam.txt
+          uv run agents exam --skip-without-key --reuse-accepted --resume | tee exam.txt
       - name: Exam summary
         if: always() && hashFiles('exam.txt') != ''
         run: |
@@ -96,4 +103,5 @@ jobs:
         if: always() && hashFiles('reports/*.json') != ''
         with:
           name: exam-reports
+          overwrite: true
           path: reports/

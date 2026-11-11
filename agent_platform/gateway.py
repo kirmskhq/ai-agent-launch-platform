@@ -305,6 +305,8 @@ def _remote_reply(
     }
     if max_tokens is not None:
         request["max_tokens"] = max_tokens
+    if spec.options:
+        request["extra_body"] = dict(spec.options)
 
     attempts = provider.retries + 1
     last: Exception | None = None

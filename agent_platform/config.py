@@ -7,7 +7,7 @@ is a change in one file.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -97,6 +97,9 @@ class ModelSpec(_Strict):
     provider: str
     model: str = Field(description="The provider's own model id")
     price_usd_per_1m: Price
+    options: dict[str, Any] = Field(
+        default={}, description="Extra request fields this model needs, such as reasoning_effort"
+    )
 
 
 class ModelsConfig(_Strict):

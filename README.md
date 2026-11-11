@@ -124,7 +124,7 @@ uv run agents exam payment-reconciliation --model mock
 uv run agents compare reports/payment-reconciliation.json reports/trials/payment-reconciliation@mock.json
 ```
 
-Passports select Groq's `openai/gpt-oss-120b`. Copy `.env.example` to `.env` and set
+Passports select Groq's `openai/gpt-oss-20b`. Copy `.env.example` to `.env` and set
 `GROQ_API_KEY=your-key`. For GitHub Actions, add GROQ_API_KEY as a repository secret.
 Configuration also supports OpenAI and OpenRouter.
 

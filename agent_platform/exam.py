@@ -40,7 +40,14 @@ from pydantic import BaseModel
 from agent_platform.cases import CaseSet, cases_path, check_case_sets, is_handover, load_cases
 from agent_platform.config import models_config, platform_config
 from agent_platform.economics import monthly_effect
-from agent_platform.gateway import GatewayError, has_key, mock_model, track, use_model
+from agent_platform.gateway import (
+    GatewayError,
+    exam_quota_guard,
+    has_key,
+    mock_model,
+    track,
+    use_model,
+)
 from agent_platform.loader import Graph, fingerprint, load_graph, load_mock_model
 from agent_platform.passport import Exam, Passport, load_passport
 from agent_platform.settings import ROOT, paths
@@ -442,6 +449,7 @@ def run_exam(
     graph = load_graph(agent_dir)
     runs = runs_per_case or (passport.exam.runs_per_case if case_set == "holdout" else 1)
     with (
+        exam_quota_guard(),
         mock_model(responder) if responder else nullcontext(),
         granted(passport.name, passport.tools, can_write=False),
     ):

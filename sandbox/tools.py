@@ -5,6 +5,7 @@ platform's tool registry, which enforces what each agent may call), over HTTP by
 `sandbox.app`, and over MCP by `sandbox.mcp_server`.
 """
 
+import math
 import re
 
 from sandbox.store import STORE, as_dict
@@ -23,11 +24,12 @@ def find_customer(name: str) -> dict | None:
     wanted = _normalise(name)
     if not wanted:
         return None
+    matches = []
     for c in STORE.customers.values():
         known = _normalise(c.name)
         if wanted == known or known.startswith(wanted) or wanted.startswith(known):
-            return as_dict(c)
-    return None
+            matches.append(c)
+    return as_dict(matches[0]) if len(matches) == 1 else None
 
 
 def list_open_invoices(customer_id: str) -> list[dict]:
@@ -68,10 +70,18 @@ def match_statement_line(line_id: str, invoice_ids: list[str], fee: float = 0.0)
             return {"error": f"no statement line {line_id}"}
         if line.matched_to:
             return {"error": f"{line_id} is already matched to {', '.join(line.matched_to)}"}
+        if not math.isfinite(fee) or fee < 0 or len(set(invoice_ids)) != len(invoice_ids):
+            return {"error": "fee must be finite and nonnegative; invoice IDs must be unique"}
         invoices = [STORE.invoices.get(i) for i in invoice_ids]
         if not invoice_ids or any(i is None or i.status != "open" for i in invoices):
             return {"error": "every invoice must exist and be open"}
-        total = round(sum(i.amount for i in invoices) - fee, 2)
+        customer = find_customer(line.payer)
+        if customer is None or any(i.customer_id != customer["id"] for i in invoices):
+            return {"error": "every invoice must belong to the identified payer"}
+        gross = sum(i.amount for i in invoices)
+        if fee > 25 or fee > round(gross * 0.03, 2):
+            return {"error": "bank fee exceeds the policy limit"}
+        total = round(gross - fee, 2)
         if abs(total - line.amount) > 0.005:
             return {"error": f"invoices less fee come to {total}, the line is {line.amount}"}
         for i in invoices:
@@ -87,7 +97,11 @@ def issue_refund(request_id: str, amount: float) -> dict:
         if request is None or request.status != "pending":
             return {"error": f"no pending refund request {request_id}"}
         order = STORE.orders[request.order_id]
-        if amount <= 0 or amount > round(order.amount - order.refunded, 2):
+        if (
+            not math.isfinite(amount)
+            or amount <= 0
+            or amount > round(order.amount - order.refunded, 2)
+        ):
             return {"error": f"{amount} is more than is left to refund on {order.id}"}
         order.refunded = round(order.refunded + amount, 2)
         request.status, request.note = "refunded", f"refunded {amount:.2f}"

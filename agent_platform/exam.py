@@ -20,12 +20,15 @@ The pass mark is applied to the lower confidence bound of answer accuracy, not t
 estimate: 28 right out of 30 is 93%, but it does not prove the agent is 93% accurate.
 """
 
+import ast
 import copy
+import json
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from contextvars import copy_context
 from datetime import UTC, datetime
@@ -33,12 +36,19 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_platform.cases import CaseSet, cases_path, check_case_sets, is_handover, load_cases
 from agent_platform.config import models_config, platform_config
 from agent_platform.economics import monthly_effect
-from agent_platform.gateway import GatewayError, has_key, mock_model, track, use_model
+from agent_platform.gateway import (
+    GatewayError,
+    exam_quota_guard,
+    has_key,
+    mock_model,
+    track,
+    use_model,
+)
 from agent_platform.loader import Graph, fingerprint, load_graph, load_mock_model
 from agent_platform.passport import Exam, Passport, load_passport
 from agent_platform.settings import ROOT, paths
@@ -133,6 +143,7 @@ class ExamReport(BaseModel):
     passed: bool
     reasons: list[str]
     cases: list[CaseResult]
+    resumed_from: list[str] = Field(default_factory=list)
 
 
 # ── scoring ──────────────────────────────────────────────────────────────────────────────
@@ -190,7 +201,11 @@ def _run_once(graph: Graph, case: dict, matches: Matcher, model: str) -> Run:
     started = time.perf_counter()
     with use_model(model), track() as ledger:
         try:
-            state = graph.invoke(copy.deepcopy(case["input"]))
+            state = graph.invoke(
+                copy.deepcopy(
+                    {key: value for key, value in case["input"].items() if key != "output"}
+                )
+            )
             output = state.get("output") if isinstance(state, dict) else None
         except GatewayError as e:
             infra, error = True, f"{type(e).__name__}: {e}"
@@ -216,7 +231,8 @@ def _settle(case: dict, runs: list[Run]) -> CaseResult:
         id=str(case["id"]),
         expected=case["expected"],
         outcome=next(o for o in WORST_FIRST if o in outcomes),
-        consistent=len(outcomes) == 1,
+        consistent=len({json.dumps(canonical(r.output), sort_keys=True) for r in runs}) == 1
+        and len(outcomes) == 1,
         runs=runs,
     )
 
@@ -226,6 +242,152 @@ def _percentile(values: list[float], q: float) -> float:
         return 0.0
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+
+def accumulated_run(old: Run, new: Run) -> Run:
+    return new.model_copy(
+        update={
+            "cost": old.cost + new.cost,
+            "model_calls": old.model_calls + new.model_calls,
+            "latency_s": old.latency_s + new.latency_s,
+        }
+    )
+
+
+def validate_resume(report, passport, cases, model, case_set, runs, current_fingerprint):
+    expected_kind = "mock" if models_config().is_mock(model) else "real"
+    if (
+        report.agent != passport.name
+        or report.model != model
+        or report.case_set != case_set
+        or report.runs_per_case != runs
+        or report.fingerprint != current_fingerprint
+        or report.measured_on != expected_kind
+        or report.currency != platform_config().currency
+        or len(report.cases) != len(cases)
+    ):
+        raise ExamError("saved exam does not match the current agent, model, settings or cases")
+    for saved, case in zip(report.cases, cases, strict=True):
+        if (
+            saved.id != str(case["id"])
+            or saved.expected != case["expected"]
+            or len(saved.runs) != runs
+        ):
+            raise ExamError("saved case IDs, labels or run slots do not match")
+        matcher = make_matcher(passport.exam)
+        for run in saved.runs:
+            outcome = classify(
+                run.output,
+                case["expected"],
+                error=run.error,
+                infra=run.outcome == "infra_failure",
+                matches=matcher,
+            )
+            if outcome != run.outcome:
+                raise ExamError("saved run outcome disagrees with its recorded answer")
+
+
+# One audited migration for reports produced before checkpointing was introduced.
+# All inference, scoring, cases, model settings and other runtime sources still have to match.
+PRE_CHECKPOINT_COMMIT = "38355b5605de313fe2d197e035721c1ff2f83656"
+
+
+def prepare_resume(report: ExamReport, agent_dir: Path) -> ExamReport:
+    passport = load_passport(agent_dir)
+    current = fingerprint(agent_dir, passport)
+    if report.fingerprint != current:
+        overrides = {}
+        for name in ("agent_platform/loader.py", "agent_platform/exam.py"):
+            result = subprocess.run(
+                ["git", "show", f"{PRE_CHECKPOINT_COMMIT}:{name}"],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode:
+                raise ExamError("old report requires its original commit in local Git history")
+            overrides[name] = result.stdout
+        old_tree = ast.parse(overrides["agent_platform/exam.py"])
+        new_tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        for name in (
+            "canonical",
+            "make_matcher",
+            "classify",
+            "_run_once",
+            "_settle",
+            "_percentile",
+            "verdict",
+        ):
+            old = function_node(old_tree, name)
+            new = function_node(new_tree, name)
+            if ast.dump(old) != ast.dump(new):
+                raise ExamError("evaluation logic changed; start a fresh exam")
+        old_builder = function_node(old_tree, "examine")
+        count_index = next(
+            i
+            for i, node in enumerate(old_builder.body)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "counts"
+        )
+        old_metrics = ast.Module(body=old_builder.body[count_index:], type_ignores=[])
+        new_metrics = ast.Module(body=function_node(new_tree, "build_report").body, type_ignores=[])
+        if ast.dump(IgnoreDuration().visit(old_metrics)) != ast.dump(
+            IgnoreDuration().visit(new_metrics)
+        ):
+            raise ExamError("exam calculations changed; start a fresh exam")
+        old_loader = ast.parse(overrides["agent_platform/loader.py"])
+        new_loader = ast.parse((ROOT / "agent_platform/loader.py").read_text(encoding="utf-8"))
+        for node in old_loader.body:
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name != "fingerprint"
+                and ast.dump(node) != ast.dump(function_node(new_loader, node.name))
+            ):
+                raise ExamError("agent loading changed; start a fresh exam")
+        if fingerprint(agent_dir, passport, runtime_sources=overrides) != report.fingerprint:
+            raise ExamError("saved exam predates an agent, model, policy or evaluation change")
+    cases = load_cases(cases_path(agent_dir, "holdout"))
+    validate_resume(
+        report.model_copy(update={"fingerprint": current}),
+        passport,
+        cases,
+        passport.model,
+        "holdout",
+        passport.exam.runs_per_case,
+        current,
+    )
+    rebuilt = build_report(
+        passport,
+        [_settle(c, saved.runs) for c, saved in zip(cases, report.cases, strict=True)],
+        case_set="holdout",
+        model=passport.model,
+        runs_per_case=passport.exam.runs_per_case,
+        agent_fingerprint=current,
+        duration_s=report.duration_s,
+    )
+    rebuilt.finished_at, rebuilt.git_sha = report.finished_at, report.git_sha
+    rebuilt.resumed_from = list(dict.fromkeys([*report.resumed_from, report.fingerprint]))
+    return rebuilt
+
+
+def function_node(tree: ast.Module, name: str) -> ast.FunctionDef:
+    node = next(
+        (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name),
+        None,
+    )
+    if node is None:
+        raise ExamError(f"evaluation function {name} changed; start a fresh exam")
+    return node
+
+
+class IgnoreDuration(ast.NodeTransformer):
+    """Compare the old and extracted calculations while allowing elapsed-time bookkeeping."""
+
+    def visit_keyword(self, node):
+        if node.arg == "duration_s":
+            node.value = ast.Constant(value=0)
+        return self.generic_visit(node)
 
 
 def examine(
@@ -238,20 +400,54 @@ def examine(
     runs_per_case: int,
     agent_fingerprint: str,
     workers: int = 4,
+    previous: ExamReport | None = None,
+    checkpoint: Path | None = None,
 ) -> ExamReport:
     """Run every case `runs_per_case` times and judge the result against the passport."""
     started = time.perf_counter()
     matches = make_matcher(passport.exam)
     context = copy_context()  # carries the mock responder and open ledgers into the threads
+    if previous is not None:
+        validate_resume(
+            previous, passport, cases, model, case_set, runs_per_case, agent_fingerprint
+        )
+    pending = Run(outcome="infra_failure", error="not run yet", cost=0, latency_s=0, model_calls=0)
+    results = [
+        [r.model_copy(deep=True) for r in previous.cases[i].runs]
+        if previous
+        else [pending.model_copy() for _ in range(runs_per_case)]
+        for i in range(len(cases))
+    ]
+
+    def save_progress():
+        if checkpoint is not None:
+            report = build_report(
+                passport,
+                [_settle(c, runs) for c, runs in zip(cases, results, strict=True)],
+                case_set=case_set,
+                model=model,
+                runs_per_case=runs_per_case,
+                agent_fingerprint=agent_fingerprint,
+                duration_s=(previous.duration_s if previous else 0) + time.perf_counter() - started,
+            )
+            if previous:
+                report.resumed_from = list(
+                    dict.fromkeys([*previous.resumed_from, previous.fingerprint])
+                )
+            save_report(report, checkpoint)
+
+    save_progress()
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = [
-            [
-                pool.submit(context.copy().run, _run_once, graph, case, matches, model)
-                for _ in range(runs_per_case)
-            ]
-            for case in cases
-        ]
-        results = [[f.result() for f in runs] for runs in futures]
+        futures = {
+            pool.submit(context.copy().run, _run_once, graph, case, matches, model): (i, k)
+            for i, case in enumerate(cases)
+            for k, old in enumerate(results[i])
+            if old.outcome == "infra_failure"
+        }
+        for future in as_completed(futures):
+            i, k = futures[future]
+            results[i][k] = accumulated_run(results[i][k], future.result())
+            save_progress()
     # A provider that pauses after bursts can outlast the gateway's retries. Runs that never
     # reached the model are tried once more, one at a time, before anything is judged.
     # If a rerun still fails, the provider is down or out of quota: stop rather than send a
@@ -260,13 +456,33 @@ def examine(
     for case, case_runs in zip(cases, results, strict=True):
         for k, run in enumerate(case_runs):
             if run.outcome == "infra_failure" and not provider_down:
-                case_runs[k] = context.copy().run(_run_once, graph, case, matches, model)
+                replacement = context.copy().run(_run_once, graph, case, matches, model)
+                case_runs[k] = accumulated_run(run, replacement)
+                save_progress()
                 provider_down = case_runs[k].outcome == "infra_failure"
+    save_progress()
     results = [_settle(case, runs) for case, runs in zip(cases, results, strict=True)]
 
+    report = build_report(
+        passport,
+        results,
+        case_set=case_set,
+        model=model,
+        runs_per_case=runs_per_case,
+        agent_fingerprint=agent_fingerprint,
+        duration_s=(previous.duration_s if previous else 0) + time.perf_counter() - started,
+    )
+    if previous:
+        report.resumed_from = list(dict.fromkeys([*previous.resumed_from, previous.fingerprint]))
+    return report
+
+
+def build_report(
+    passport, results, *, case_set, model, runs_per_case, agent_fingerprint, duration_s
+):
     counts = {o: sum(c.outcome == o for c in results) for o in OUTCOMES}
     measured = [c for c in results if c.outcome != "infra_failure"]
-    runs = [r for c in measured for r in c.runs]
+    runs = [r for c in results for r in c.runs]
     answered = counts["answered_correct"] + counts["answered_wrong"]
     accuracy = counts["answered_correct"] / answered if answered else None
     lower = (
@@ -305,7 +521,7 @@ def examine(
         fingerprint=agent_fingerprint,
         git_sha=_git_sha(),
         finished_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        duration_s=round(time.perf_counter() - started, 1),
+        duration_s=round(duration_s, 1),
         runs_per_case=runs_per_case,
         confidence=passport.exam.confidence,
         cases_total=len(results),
@@ -339,6 +555,10 @@ def verdict(r: ExamReport) -> list[str]:
     reasons = []
     if r.case_set != "holdout":
         reasons.append("dev cases are for building the agent; only a holdout exam can pass")
+    if r.runs_per_case != 3:
+        reasons.append("acceptance requires three runs per holdout case")
+    if r.confidence != 0.90:
+        reasons.append("acceptance requires 90% confidence")
     if r.counts["infra_failure"]:
         reasons.append(
             f"exam incomplete: {r.counts['infra_failure']} of {r.cases_total} cases could not "
@@ -398,6 +618,8 @@ def run_exam(
     runs_per_case: int | None = None,
     workers: int = 4,
     limit: int | None = None,
+    resume: Path | None = None,
+    checkpoint: Path | None = None,
 ) -> ExamReport:
     passport = load_passport(agent_dir)
     problems = check_case_sets(agent_dir, passport.exam.min_holdout_cases)
@@ -421,9 +643,15 @@ def run_exam(
         )
 
     cases = load_cases(cases_path(agent_dir, case_set))[:limit]
+    previous = None
+    if resume is not None and resume.is_file():
+        if case_set != "holdout" or limit is not None or model != passport.model:
+            raise ExamError("resume requires the full holdout on the passport model")
+        previous = prepare_resume(load_report(resume), agent_dir)
     graph = load_graph(agent_dir)
     runs = runs_per_case or (passport.exam.runs_per_case if case_set == "holdout" else 1)
     with (
+        exam_quota_guard(),
         mock_model(responder) if responder else nullcontext(),
         granted(passport.name, passport.tools, can_write=False),
     ):
@@ -436,6 +664,8 @@ def run_exam(
             runs_per_case=runs,
             agent_fingerprint=fingerprint(agent_dir, passport),
             workers=workers,
+            previous=previous,
+            checkpoint=checkpoint,
         )
 
 
@@ -454,7 +684,16 @@ def default_report_path(report: ExamReport, passport_model: str) -> Path:
 
 def save_report(report: ExamReport, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(report.model_dump_json(indent=1), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
+    ) as stream:
+        stream.write(report.model_dump_json(indent=1))
+        temporary = stream.name
+    try:
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def load_report(path: Path) -> ExamReport:

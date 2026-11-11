@@ -39,6 +39,8 @@ def load_cases(path: Path) -> list[dict]:
             missing = {"id", "input", "expected"} - case.keys()
             if missing:
                 raise ValueError(f"{path.name} line {n}: missing {', '.join(sorted(missing))}")
+            if not isinstance(case["id"], str) or not case["id"].strip():
+                raise ValueError(f"{path.name} line {n}: id must be a nonempty string")
             if not isinstance(case["input"], dict):
                 raise ValueError(f"{path.name} line {n}: input must be an object")
             cases.append(case)

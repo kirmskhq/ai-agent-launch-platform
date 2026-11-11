@@ -50,6 +50,19 @@ def test_refunds_never_exceed_what_is_left():
     assert len(tools.list_pending_refund_requests()) == 4
 
 
+@pytest.mark.parametrize("amount", [float("nan"), float("inf"), -1, 0])
+def test_invalid_refund_amounts_leave_balances_unchanged(amount):
+    assert "error" in tools.issue_refund("RR-9001", amount)
+    assert STORE.orders["ORD-7001"].refunded == 0
+
+
+def test_match_refuses_repeated_invoices_and_invalid_fees():
+    assert "error" in tools.match_statement_line("BSL-5002", ["INV-1201", "INV-1201"])
+    assert "error" in tools.match_statement_line("BSL-5002", ["INV-1201"], float("nan"))
+    assert "error" in tools.match_statement_line("BSL-5002", ["INV-1201"], -10)
+    assert STORE.invoices["INV-1201"].status == "open"
+
+
 def test_reset_restores_the_seed():
     tools.issue_refund("RR-9001", 48)
     STORE.reset()

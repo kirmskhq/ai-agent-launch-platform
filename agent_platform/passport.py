@@ -22,7 +22,7 @@ NAME_PATTERN = r"^[a-z][a-z0-9-]{1,40}$"
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class Baseline(_Strict):
@@ -70,8 +70,8 @@ class Exam(_Strict):
         le=1,
         description="The lower confidence bound of answer accuracy must reach this",
     )
-    confidence: float = Field(default=0.90, gt=0.5, lt=1)
-    runs_per_case: int = Field(default=3, ge=1, le=10)
+    confidence: Literal[0.90] = 0.90
+    runs_per_case: Literal[3] = 3
     min_holdout_cases: int = Field(default=30, ge=10)
     min_answered_share: float = Field(
         default=0.0, ge=0, le=1, description="Share of cases the agent must settle itself"

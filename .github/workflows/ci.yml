@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   checks:
@@ -61,6 +62,24 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --frozen --python 3.12
+      - name: Restore matching accepted reports from the latest completed branch run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          exam_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          previous_run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --branch "$exam_branch" --status completed --limit 1 --json databaseId \
+            --jq '.[0].databaseId // empty')
+          if [ -n "$previous_run" ]; then
+            candidate_dir="$RUNNER_TEMP/exam-reuse"
+            if gh run download "$previous_run" --repo "$GITHUB_REPOSITORY" \
+              --name exam-reports --dir "$candidate_dir"; then
+              for report in "$candidate_dir"/*.json; do
+                [ -f "$report" ] || continue
+                uv run agents accept-report "$report" || true
+              done
+            fi
+          fi
       - name: No model key
         if: env.GROQ_API_KEY == '' && env.OPENAI_API_KEY == '' && env.OPENROUTER_API_KEY == ''
         run: echo "::notice::No model key secret is set; real-model exams were skipped."
@@ -68,7 +87,7 @@ jobs:
         if: env.GROQ_API_KEY != '' || env.OPENAI_API_KEY != '' || env.OPENROUTER_API_KEY != ''
         run: |
           set -o pipefail
-          uv run agents exam --skip-without-key | tee exam.txt
+          uv run agents exam --skip-without-key --reuse-accepted | tee exam.txt
       - name: Exam summary
         if: always() && hashFiles('exam.txt') != ''
         run: |

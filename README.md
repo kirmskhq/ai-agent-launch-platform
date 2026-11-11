@@ -124,7 +124,8 @@ uv run agents exam payment-reconciliation --model mock
 uv run agents compare reports/payment-reconciliation.json reports/trials/payment-reconciliation@mock.json
 ```
 
-Passports select Groq's `openai/gpt-oss-20b`. Copy `.env.example` to `.env` and set
+Reconciliation selects Groq's `openai/gpt-oss-20b`. Refund requests select
+`openai/gpt-oss-120b`, which cleared the stricter refund acceptance bar. Copy `.env.example` to `.env` and set
 `GROQ_API_KEY=your-key`. For GitHub Actions, add GROQ_API_KEY as a repository secret.
 Configuration also supports OpenAI and OpenRouter.
 
@@ -136,7 +137,9 @@ when choosing another currency. Keep currency fixed during an observation period
 Pull-request CI runs real exams when the model's key exists. Exams are serialized across
 branches sharing the key. Pushes to main run code checks, and manual CI runs can repeat exams. Results appear in the job summary and the
 exam-reports artifact. CI can pass code checks while skipping exams. Read the actual exam
-summary before accepting an agent.
+summary before accepting an agent. CI can reuse a passed report from the latest completed
+branch run after the installer verifies the complete fingerprint. Changed or failed reports
+require fresh exams. The summary states when an earlier accepted report is reused.
 
 ## Pull deployment
 

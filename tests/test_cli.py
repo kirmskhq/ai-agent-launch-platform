@@ -37,6 +37,30 @@ def test_skip_without_key(workspace, capsys):
     assert "skip expense-real: no key for test-real" in capsys.readouterr().out
 
 
+def test_reuse_accepted_exam_requires_matching_fingerprint(
+    workspace, real_model, monkeypatch, capsys
+):
+    from agent_platform import exam
+    from agent_platform.exam import acceptance_report_path
+
+    agent = make_agent(workspace, "expense-real", model="test-real")
+    report = run_exam(agent)
+    save_report(report, acceptance_report_path(report.agent))
+
+    def unexpected_run(*args, **kwargs):
+        raise RuntimeError("a fresh model run was requested")
+
+    monkeypatch.setattr(exam, "run_exam", unexpected_run)
+    assert main(["exam", "expense-real", "--reuse-accepted"]) == 0
+    assert "reusing accepted exam" in capsys.readouterr().out
+    graph = agent / "graph.py"
+    graph.write_text(graph.read_text() + "\n# A new code version\n")
+    import pytest
+
+    with pytest.raises(RuntimeError, match="fresh model run"):
+        main(["exam", "expense-real", "--reuse-accepted"])
+
+
 def test_compare_two_models(workspace, real_model, capsys):
     agent = make_agent(workspace, "expense-real", model="test-real")
     a = run_exam(agent, model="mock")

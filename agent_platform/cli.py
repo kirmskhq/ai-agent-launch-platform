@@ -155,6 +155,7 @@ def cmd_exam(args: argparse.Namespace) -> int:
     from agent_platform.exam import ExamError, default_report_path, run_exam, save_report
     from agent_platform.gateway import has_key
     from agent_platform.passport import PassportError, load_passport
+    from agent_platform.registry import record
 
     dirs = _dirs(args.agents)
     if not dirs:
@@ -170,6 +171,20 @@ def cmd_exam(args: argparse.Namespace) -> int:
             continue
         if passport.lifecycle == "retired" and not args.agents:
             continue
+        if (
+            args.reuse_accepted
+            and args.set == "holdout"
+            and args.model is None
+            and args.runs is None
+            and args.limit is None
+        ):
+            accepted = record(d)
+            if accepted.runs:
+                print(f"reusing accepted exam from {accepted.report.finished_at}")
+                print_report(accepted.report)
+                if args.out:
+                    save_report(accepted.report, args.out)
+                continue
         model = args.model or passport.model
         if args.skip_without_key:
             cfg = models_config()
@@ -364,6 +379,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", type=Path, help="Where to write the report")
     p.add_argument(
         "--skip-without-key", action="store_true", help="Skip agents whose model has no key"
+    )
+    p.add_argument(
+        "--reuse-accepted",
+        action="store_true",
+        help="Reuse a passed report only when its full code and configuration fingerprint matches",
     )
     p.set_defaults(func=cmd_exam)
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Agent catalogue{% endblock %}</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2330; --muted: #5d6677; --line: #e2e5ea; --soft: #f5f6f8;
+    --good: #1f7a45; --bad: #b3261e; --warn: #8a5a00; --idle: #5d6677; --link: #1f5fbf;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --fg: #e6e8eb; --muted: #9aa3b2; --line: #2b3038; --soft: #1b1f26;
+      --good: #5cc488; --bad: #f28b82; --warn: #e3b341; --idle: #9aa3b2; --link: #8ab4f8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .wrap { overflow-x: auto; }
+  .status { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 13px;
+            border: 1px solid currentColor; white-space: nowrap; }
+  .s-running { color: var(--good); }
+  .s-not_accepted { color: var(--bad); }
+  .s-no_exam { color: var(--warn); }
+  .s-draft, .s-retired { color: var(--idle); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+           gap: 12px; margin: 16px 0; }
+  .tile { background: var(--soft); border: 1px solid var(--line); border-radius: 8px;
+          padding: 12px 14px; }
+  .tile .k { color: var(--muted); font-size: 13px; }
+  .tile .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .label { color: var(--muted); font-size: 13px; }
+  ul.reasons { margin: 6px 0 0; padding-left: 18px; }
+  code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  pre { background: var(--soft); border: 1px solid var(--line); border-radius: 6px;
+        padding: 10px; overflow-x: auto; white-space: pre-wrap; }
+  dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dl.kv dt { color: var(--muted); }
+  dl.kv dd { margin: 0; }
+</style>
+</head>
+<body>
+<main>
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,449 @@
+"""The exam: run an agent on past cases with known answers and decide whether it may go live.
+
+Each run of a case ends in one of five outcomes, reported separately:
+
+    answered_correct    the agent answered and the answer is right
+    answered_wrong      the agent answered and the answer is wrong, it answered a case that
+                        should have gone to a person, or its code crashed
+    correct_handover    the agent handed the case to a person, and that was the right call
+    unneeded_handover   the agent handed over a case it should have settled
+    infra_failure       the model could not be reached; says nothing about the agent
+
+Only answered_correct saves staff time. A correct handover is good behaviour, but the person
+still does the work, so it saves nothing.
+
+Holdout cases run several times (`exam.runs_per_case`, default 3). A case counts as correct
+only if every run is correct; otherwise it takes its worst outcome. Consistency is the share of
+cases where every run ended the same way.
+
+The pass mark is applied to the lower confidence bound of answer accuracy, not to the point
+estimate: 28 right out of 30 is 93%, but it does not prove the agent is 93% accurate.
+"""
+
+import copy
+import os
+import subprocess
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from contextvars import copy_context
+from datetime import UTC, datetime
+from pathlib import Path
+from statistics import mean
+from typing import Any, Literal
+
+from pydantic import BaseModel
+
+from agent_platform.cases import CaseSet, cases_path, check_case_sets, is_handover, load_cases
+from agent_platform.config import models_config, platform_config
+from agent_platform.economics import monthly_effect
+from agent_platform.gateway import GatewayError, has_key, mock_model, track, use_model
+from agent_platform.loader import Graph, fingerprint, load_graph, load_mock_model
+from agent_platform.passport import Exam, Passport, load_passport
+from agent_platform.settings import ROOT, paths
+from agent_platform.stats import wilson_lower_bound
+
+Outcome = Literal[
+    "answered_correct",
+    "answered_wrong",
+    "correct_handover",
+    "unneeded_handover",
+    "infra_failure",
+]
+OUTCOMES: tuple[Outcome, ...] = (
+    "answered_correct",
+    "answered_wrong",
+    "correct_handover",
+    "unneeded_handover",
+    "infra_failure",
+)
+WORST_FIRST: tuple[Outcome, ...] = (
+    "infra_failure",
+    "answered_wrong",
+    "unneeded_handover",
+    "correct_handover",
+    "answered_correct",
+)
+CORRECT: frozenset[str] = frozenset({"answered_correct", "correct_handover"})
+
+Matcher = Callable[[Any, Any], bool]
+
+
+class ExamError(RuntimeError):
+    """The exam cannot start: broken case files, missing key, unknown model."""
+
+
+class Run(BaseModel):
+    outcome: Outcome
+    output: Any = None
+    error: str | None = None
+    cost: float
+    latency_s: float
+    model_calls: int
+
+
+class CaseResult(BaseModel):
+    id: str
+    expected: Any
+    outcome: Outcome
+    consistent: bool
+    runs: list[Run]
+
+    @property
+    def correct(self) -> bool:
+        return self.outcome in CORRECT
+
+
+class ExamReport(BaseModel):
+    agent: str
+    case_set: CaseSet
+    model: str
+    measured_on: Literal["real", "mock"]
+    currency: str
+    fingerprint: str
+    git_sha: str | None
+    finished_at: str
+    duration_s: float
+    runs_per_case: int
+    confidence: float
+
+    cases_total: int
+    cases_measured: int
+    counts: dict[Outcome, int]
+    answered: int
+    answer_accuracy: float | None
+    accuracy_lower_bound: float | None
+    answered_share: float
+    consistency: float
+    cost_per_case: float
+    latency_p50_s: float
+    latency_p95_s: float
+
+    min_accuracy: float
+    break_even_accuracy: float
+    min_answered_share: float
+    max_cost_per_case: float | None
+    min_holdout_cases: int
+
+    effect: dict
+    effect_at_lower_bound: dict
+
+    passed: bool
+    reasons: list[str]
+    cases: list[CaseResult]
+
+
+# ── scoring ──────────────────────────────────────────────────────────────────────────────
+
+
+def _canonical(value: Any) -> Any:
+    """Normalise for comparison: case and spacing in text, numbers to 2 decimals, list order."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int | float):
+        return round(float(value), 2)
+    if isinstance(value, str):
+        return " ".join(value.casefold().split())
+    if isinstance(value, list):
+        return sorted((_canonical(v) for v in value), key=repr)
+    if isinstance(value, dict):
+        return {k: _canonical(v) for k, v in value.items()}
+    return value
+
+
+def make_matcher(exam: Exam) -> Matcher:
+    def matches(output: Any, expected: Any) -> bool:
+        if exam.scoring == "exact" or not isinstance(expected, dict):
+            return _canonical(output) == _canonical(expected)
+        if not isinstance(output, dict):
+            return False
+        keys = exam.fields or list(expected)
+        return all(_canonical(output.get(k)) == _canonical(expected.get(k)) for k in keys)
+
+    return matches
+
+
+def classify(output: Any, expected: Any, *, error: str | None, infra: bool, matches: Matcher):
+    if infra:
+        return "infra_failure"
+    expects_handover = is_handover(expected)
+    if error is not None or output is None:
+        # A crash is a defect, not a safe handover, even though production falls back to a
+        # person when it happens.
+        return "answered_wrong"
+    if is_handover(output):
+        return "correct_handover" if expects_handover else "unneeded_handover"
+    if expects_handover:
+        return "answered_wrong"
+    return "answered_correct" if matches(output, expected) else "answered_wrong"
+
+
+# ── running ──────────────────────────────────────────────────────────────────────────────
+
+
+def _run_once(graph: Graph, case: dict, matches: Matcher, model: str) -> Run:
+    output: Any = None
+    error: str | None = None
+    infra = False
+    started = time.perf_counter()
+    with use_model(model), track() as ledger:
+        try:
+            state = graph.invoke(copy.deepcopy(case["input"]))
+            output = state.get("output") if isinstance(state, dict) else None
+        except GatewayError as e:
+            infra, error = True, f"{type(e).__name__}: {e}"
+        except Exception as e:  # the agent's own failure is a failed case, not a failed exam
+            error = f"{type(e).__name__}: {e}"
+    if ledger.failed_calls and not infra:
+        # The agent caught a model failure itself; the run measured nothing either way.
+        infra = True
+        error = error or "a model call failed inside the agent"
+    return Run(
+        outcome=classify(output, case["expected"], error=error, infra=infra, matches=matches),
+        output=output,
+        error=error,
+        cost=ledger.cost,
+        latency_s=round(time.perf_counter() - started, 3),
+        model_calls=len(ledger.calls),
+    )
+
+
+def _settle(case: dict, runs: list[Run]) -> CaseResult:
+    outcomes = {r.outcome for r in runs}
+    return CaseResult(
+        id=str(case["id"]),
+        expected=case["expected"],
+        outcome=next(o for o in WORST_FIRST if o in outcomes),
+        consistent=len(outcomes) == 1,
+        runs=runs,
+    )
+
+
+def _percentile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+
+def examine(
+    passport: Passport,
+    graph: Graph,
+    cases: list[dict],
+    *,
+    case_set: CaseSet,
+    model: str,
+    runs_per_case: int,
+    agent_fingerprint: str,
+    workers: int = 4,
+) -> ExamReport:
+    """Run every case `runs_per_case` times and judge the result against the passport."""
+    started = time.perf_counter()
+    matches = make_matcher(passport.exam)
+    context = copy_context()  # carries the mock responder and open ledgers into the threads
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [
+            [
+                pool.submit(context.copy().run, _run_once, graph, case, matches, model)
+                for _ in range(runs_per_case)
+            ]
+            for case in cases
+        ]
+        results = [
+            _settle(case, [f.result() for f in runs])
+            for case, runs in zip(cases, futures, strict=True)
+        ]
+
+    counts = {o: sum(c.outcome == o for c in results) for o in OUTCOMES}
+    measured = [c for c in results if c.outcome != "infra_failure"]
+    runs = [r for c in measured for r in c.runs]
+    answered = counts["answered_correct"] + counts["answered_wrong"]
+    accuracy = counts["answered_correct"] / answered if answered else None
+    lower = (
+        wilson_lower_bound(counts["answered_correct"], answered, passport.exam.confidence)
+        if answered
+        else None
+    )
+    answered_share = answered / len(measured) if measured else 0.0
+    cost_per_case = mean(r.cost for r in runs) if runs else 0.0
+
+    platform = platform_config()
+    base = passport.baseline
+
+    def effect(correct_share: float, wrong_share: float) -> dict:
+        return monthly_effect(
+            cases_per_month=base.cases_per_month,
+            minutes_per_case=base.minutes_per_case,
+            staff_cost_per_hour=base.staff_cost_per_hour,
+            error_cost=passport.error_cost,
+            correct_share=correct_share,
+            wrong_share=wrong_share,
+            model_cost_per_case=cost_per_case,
+            hours_per_staff_month=platform.hours_per_staff_month,
+        ).as_dict()
+
+    n = len(measured) or 1
+    point = effect(counts["answered_correct"] / n, counts["answered_wrong"] / n)
+    at_lower = effect(answered_share * (lower or 0.0), answered_share * (1 - (lower or 0.0)))
+
+    report = ExamReport(
+        agent=passport.name,
+        case_set=case_set,
+        model=model,
+        measured_on="mock" if models_config().is_mock(model) else "real",
+        currency=platform.currency,
+        fingerprint=agent_fingerprint,
+        git_sha=_git_sha(),
+        finished_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        duration_s=round(time.perf_counter() - started, 1),
+        runs_per_case=runs_per_case,
+        confidence=passport.exam.confidence,
+        cases_total=len(results),
+        cases_measured=len(measured),
+        counts=counts,
+        answered=answered,
+        answer_accuracy=accuracy,
+        accuracy_lower_bound=lower,
+        answered_share=answered_share,
+        consistency=mean(c.consistent for c in measured) if measured else 0.0,
+        cost_per_case=cost_per_case,
+        latency_p50_s=_percentile([r.latency_s for r in runs], 0.5),
+        latency_p95_s=_percentile([r.latency_s for r in runs], 0.95),
+        min_accuracy=passport.exam.min_accuracy,
+        break_even_accuracy=passport.break_even_accuracy,
+        min_answered_share=passport.exam.min_answered_share,
+        max_cost_per_case=passport.exam.max_cost_per_case,
+        min_holdout_cases=passport.exam.min_holdout_cases,
+        effect=point,
+        effect_at_lower_bound=at_lower,
+        passed=False,
+        reasons=[],
+        cases=results,
+    )
+    reasons = verdict(report)
+    return report.model_copy(update={"passed": not reasons, "reasons": reasons})
+
+
+def verdict(r: ExamReport) -> list[str]:
+    """Why the exam is not passed. An empty list means it is."""
+    reasons = []
+    if r.case_set != "holdout":
+        reasons.append("dev cases are for building the agent; only a holdout exam can pass")
+    if r.counts["infra_failure"]:
+        reasons.append(
+            f"exam incomplete: {r.counts['infra_failure']} of {r.cases_total} cases could not "
+            "reach the model; rerun it"
+        )
+    if r.cases_total < r.min_holdout_cases:
+        reasons.append(f"only {r.cases_total} cases; the passport asks for {r.min_holdout_cases}")
+    if r.answered == 0:
+        reasons.append("the agent answered no case itself")
+    elif r.accuracy_lower_bound is not None and r.accuracy_lower_bound < r.min_accuracy:
+        reasons.append(
+            f"answer accuracy {r.answer_accuracy:.1%}, lower bound {r.accuracy_lower_bound:.1%} "
+            f"at {r.confidence:.0%} confidence, below the required {r.min_accuracy:.1%}"
+        )
+    if r.answered_share < r.min_answered_share:
+        reasons.append(
+            f"settled {r.answered_share:.0%} of cases itself, "
+            f"the passport asks for {r.min_answered_share:.0%}"
+        )
+    if r.max_cost_per_case is not None and r.cost_per_case > r.max_cost_per_case:
+        reasons.append(
+            f"model cost per case {r.cost_per_case:.4f} {r.currency} "
+            f"is above the ceiling of {r.max_cost_per_case:.4f}"
+        )
+    if r.answered and r.effect_at_lower_bound["net"] < 0:
+        reasons.append(
+            f"at the accuracy lower bound the agent loses "
+            f"{-r.effect_at_lower_bound['net']:,.0f} {r.currency} a month"
+        )
+    return reasons
+
+
+def _git_sha() -> str | None:
+    if sha := os.environ.get("GITHUB_SHA"):
+        return sha[:12]
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+# ── from an agent folder ─────────────────────────────────────────────────────────────────
+
+
+def run_exam(
+    agent_dir: Path,
+    *,
+    case_set: CaseSet = "holdout",
+    model: str | None = None,
+    runs_per_case: int | None = None,
+    workers: int = 4,
+    limit: int | None = None,
+) -> ExamReport:
+    passport = load_passport(agent_dir)
+    problems = check_case_sets(agent_dir, passport.exam.min_holdout_cases)
+    blocking = [p for p in problems if not p.startswith("holdout has")]
+    if blocking:
+        raise ExamError("; ".join(blocking))
+
+    model = model or passport.model
+    cfg = models_config()
+    if model not in cfg.models:
+        raise ExamError(f"model {model!r} is not in config/models.yaml")
+    responder = None
+    if cfg.is_mock(model):
+        responder = load_mock_model(agent_dir)
+        if responder is None:
+            raise ExamError(f"{agent_dir.name} has no mock_model.py; it cannot run on the mock")
+    elif not has_key(cfg.providers[cfg.models[model].provider]):
+        provider = cfg.providers[cfg.models[model].provider]
+        raise ExamError(
+            f"no key for {model}: set {provider.api_key_env}, or try the agent with --model mock"
+        )
+
+    cases = load_cases(cases_path(agent_dir, case_set))[:limit]
+    graph = load_graph(agent_dir)
+    runs = runs_per_case or (passport.exam.runs_per_case if case_set == "holdout" else 1)
+    with mock_model(responder) if responder else nullcontext():
+        return examine(
+            passport,
+            graph,
+            cases,
+            case_set=case_set,
+            model=model,
+            runs_per_case=runs,
+            agent_fingerprint=fingerprint(agent_dir, passport),
+            workers=workers,
+        )
+
+
+def acceptance_report_path(agent: str) -> Path:
+    """The one report the registry reads to decide whether an agent may run."""
+    return paths().reports / f"{agent}.json"
+
+
+def default_report_path(report: ExamReport, passport_model: str) -> Path:
+    if report.case_set == "dev":
+        return paths().state / "exams" / f"{report.agent}.dev.json"
+    if report.model != passport_model:
+        return paths().reports / "trials" / f"{report.agent}@{report.model}.json"
+    return acceptance_report_path(report.agent)
+
+
+def save_report(report: ExamReport, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(report.model_dump_json(indent=1), encoding="utf-8")
+
+
+def load_report(path: Path) -> ExamReport:
+    return ExamReport.model_validate_json(path.read_text(encoding="utf-8"))

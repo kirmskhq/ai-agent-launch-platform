@@ -192,7 +192,11 @@ def _run_once(graph: Graph, case: dict, matches: Matcher, model: str) -> Run:
     started = time.perf_counter()
     with use_model(model), track() as ledger:
         try:
-            state = graph.invoke(copy.deepcopy(case["input"]))
+            state = graph.invoke(
+                copy.deepcopy(
+                    {key: value for key, value in case["input"].items() if key != "output"}
+                )
+            )
             output = state.get("output") if isinstance(state, dict) else None
         except GatewayError as e:
             infra, error = True, f"{type(e).__name__}: {e}"

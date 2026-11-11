@@ -54,7 +54,7 @@ def _call(graph: Any, model: str, payload: dict) -> tuple[dict, bool, Ledger, fl
     started = time.perf_counter()
     with use_model(model), track() as ledger:
         try:
-            state = graph.invoke(dict(payload))
+            state = graph.invoke({key: value for key, value in payload.items() if key != "output"})
             output = state.get("output") if isinstance(state, dict) else None
             if not isinstance(output, dict):
                 raise TypeError("the agent returned no output object")

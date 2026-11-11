@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ p.title if p else a.name }}{% endblock %}
+{% block body %}
+<p><a href="/">&larr; All agents</a></p>
+<h1>{{ p.title if p else a.name }}</h1>
+<p class="lead">
+  <span class="status s-{{ a.status }}">{{ a.status_label }}</span>
+  {% if p %}&nbsp;{{ p.department }} &middot; owner {{ p.owner }} &middot; model {{ p.model }}{% endif %}
+</p>
+{% if a.reasons %}
+<ul class="reasons">{% for reason in a.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+{% endif %}
+
+{% if p %}
+<h2>What it does</h2>
+<p>{{ p.replaces }}</p>
+
+<h2>Baseline and value</h2>
+<dl class="kv">
+  <dt>Cases per month</dt><dd>{{ "{:,}".format(p.baseline.cases_per_month) }}</dd>
+  <dt>Staff time per case</dt><dd>{{ p.baseline.minutes_per_case }} min</dd>
+  <dt>Staff cost per hour</dt><dd>{{ p.baseline.staff_cost_per_hour | money(2) }}</dd>
+  <dt>Cost of one error</dt><dd>{{ p.error_cost | money(2) }}</dd>
+  <dt>Break-even accuracy</dt><dd>{{ p.break_even_accuracy | pct(1) }}</dd>
+  <dt>Metric</dt><dd>{{ p.metric.name }}: {{ p.metric.baseline }} &rarr; {{ p.metric.target }} {{ p.metric.unit }}</dd>
+  <dt>Schedule</dt><dd>{{ p.schedule ~ " (UTC)" if p.schedule else "on request only" }}</dd>
+</dl>
+{% endif %}
+
+{% if r %}
+<h2>Acceptance exam</h2>
+<p class="label">{{ r.case_set }} cases, {{ r.cases_total }} cases &times; {{ r.runs_per_case }} runs,
+  model {{ r.model }} ({{ r.measured_on }}), finished {{ r.finished_at }} UTC,
+  commit {{ r.git_sha or "-" }}</p>
+<div class="tiles">
+  <div class="tile"><div class="k">Answer accuracy</div><div class="v">{{ r.answer_accuracy | pct(1) }}</div></div>
+  <div class="tile"><div class="k">Lower bound ({{ r.confidence | pct }} confidence)</div>
+    <div class="v">{{ r.accuracy_lower_bound | pct(1) }}</div>
+    <div class="label">needed {{ r.min_accuracy | pct(1) }}</div></div>
+  <div class="tile"><div class="k">Settled by the agent</div><div class="v">{{ r.answered_share | pct }}</div></div>
+  <div class="tile"><div class="k">Consistency across runs</div><div class="v">{{ r.consistency | pct }}</div></div>
+</div>
+<div class="wrap">
+<table>
+  <tr><th>Outcome</th><th class="num">Cases</th></tr>
+  {% for key, label in outcome_labels.items() %}
+  <tr><td>{{ label }}</td><td class="num">{{ r.counts[key] }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+
+<h2>Projected monthly effect</h2>
+<p class="label">From the exam, not yet measured in production.</p>
+<div class="wrap">
+<table>
+  <tr><th></th><th class="num">At measured accuracy</th><th class="num">At lower bound</th></tr>
+  <tr><td>Staff time saved</td>
+    <td class="num">{{ "{:,.0f}".format(r.effect.staff_hours_saved) }} h</td>
+    <td class="num">{{ "{:,.0f}".format(r.effect_at_lower_bound.staff_hours_saved) }} h</td></tr>
+  <tr><td>Staff saving</td><td class="num">{{ r.effect.staff_saving | money }}</td>
+    <td class="num">{{ r.effect_at_lower_bound.staff_saving | money }}</td></tr>
+  <tr><td>Cost of errors</td><td class="num">&minus;{{ r.effect.error_cost | money }}</td>
+    <td class="num">&minus;{{ r.effect_at_lower_bound.error_cost | money }}</td></tr>
+  <tr><td>Model cost</td><td class="num">&minus;{{ r.effect.model_cost | money }}</td>
+    <td class="num">&minus;{{ r.effect_at_lower_bound.model_cost | money }}</td></tr>
+  <tr><td><b>Net</b></td><td class="num"><b>{{ r.effect.net | money }}</b></td>
+    <td class="num"><b>{{ r.effect_at_lower_bound.net | money }}</b></td></tr>
+</table>
+</div>
+<p class="label">Model cost per case {{ r.cost_per_case | money(5) }};
+  latency p50 {{ "%.1f" | format(r.latency_p50_s) }}s, p95 {{ "%.1f" | format(r.latency_p95_s) }}s.</p>
+
+{% set misses = r.cases | rejectattr("correct") | list %}
+{% if misses %}
+<h2>Cases it got wrong or could not settle ({{ misses | length }})</h2>
+<div class="wrap">
+<table>
+  <tr><th>Case</th><th>Outcome</th><th>Consistent</th><th>First run</th></tr>
+  {% for c in misses %}
+  <tr><td><code>{{ c.id }}</code></td><td>{{ outcome_labels[c.outcome] }}</td>
+    <td>{{ "yes" if c.consistent else "no" }}</td>
+    <td><code>{{ c.runs[0].error or (c.runs[0].output | tojson) }}</code></td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% else %}
+<h2>Acceptance exam</h2>
+<p>No exam yet. Run <code>agents exam {{ a.name }}</code>.</p>
+{% endif %}
+
+{% if runs %}
+<h2>Recent scheduled runs</h2>
+<div class="wrap">
+<table>
+  <tr><th>Started (UTC)</th><th>Trigger</th><th class="num">Cases</th><th class="num">Answered</th>
+    <th class="num">Handed over</th><th class="num">Model cost</th></tr>
+  {% for run in runs %}
+  <tr><td>{{ run.started_at }}</td><td>{{ run.trigger }}</td><td class="num">{{ run.cases }}</td>
+    <td class="num">{{ run.answered }}</td><td class="num">{{ run.handed_over }}</td>
+    <td class="num">{{ run.cost | money(4) }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

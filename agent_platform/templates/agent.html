@@ -1,14 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ p.title if p else a.name }}{% endblock %}
 {% block body %}
-{% set value = measured(a.name) %}
-<h2>Measured effect over the observed period</h2>
-<p>{{ value.net | money }} from {{ value.reviewed }} reviewed calls of {{ value.calls }}.
-Staff saving {{ value.staff_saving | money }}, error cost {{ value.error_cost | money }},
-model cost {{ value.model_cost | money }}.</p>
-<p>Value checkpoint after {{ value.weeks }} weeks recommends {{ value.recommendation }}.
-{{ value.reason }}</p>
-<p><a href="/operations">Review answers and approvals</a></p>
 <p><a href="/">&larr; All agents</a></p>
 <h1>{{ p.title if p else a.name }}</h1>
 <p class="lead">
@@ -35,6 +27,15 @@ model cost {{ value.model_cost | money }}.</p>
   <dt>Schedule</dt><dd>{{ p.schedule ~ " (UTC)" if p.schedule else "on request only" }}</dd>
 </dl>
 {% endif %}
+
+{% set value = measured(a.name) %}
+<h2>Measured effect over the observed period</h2>
+<p>{{ value.net | money }} from {{ value.reviewed }} reviewed calls of {{ value.calls }}.
+Staff saving {{ value.staff_saving | money }}, error cost {{ value.error_cost | money }},
+model cost {{ value.model_cost | money }}.</p>
+<p>Value checkpoint after {{ value.weeks }} weeks recommends {{ value.recommendation }}.
+{{ value.reason }}</p>
+<p><a href="/operations">Review answers and approvals</a></p>
 
 {% if a.readiness and a.readiness.proposal %}{% set rd = a.readiness %}{% include "_readiness.html" %}{% endif %}
 

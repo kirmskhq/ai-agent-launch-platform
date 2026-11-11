@@ -77,7 +77,9 @@ owner records a dated decision and reason. A build decision requires passing che
 platform team sets the bar in `config/platform.yaml`.
 
 Once cleared, add `agent.yaml`, `graph.py`, optional `job.py`, and separate `evals/dev.jsonl`
-and `evals/holdout.jsonl` files. Validation rejects agent code before readiness clearance.
+and `evals/holdout.jsonl` files. For writes, add `action.py` exposing
+`build_action(payload, output)`, returning a tool name and arguments after the graph checks
+the decision. Validation rejects agent code before readiness clearance.
 CI checks the current files. Git history and human review establish the actual development order.
 
 ## Economics and autonomy
@@ -131,7 +133,8 @@ Amounts use the currency in `config/platform.yaml`, default USD. Published token
 cost estimates on free plans too. Provider invoices can differ. Set the USD conversion rate
 when choosing another currency. Keep currency fixed during an observation period.
 
-CI runs real exams when the model's key exists. Results appear in the job summary and the
+Pull-request CI runs real exams when the model's key exists. Exams are serialized across
+branches sharing the key. Pushes to main run code checks, and manual CI runs can repeat exams. Results appear in the job summary and the
 exam-reports artifact. CI can pass code checks while skipping exams. Read the actual exam
 summary before accepting an agent.
 
@@ -188,8 +191,8 @@ companies. The server derives the tenant from the token. Decisions, approvals an
 sandbox data follow that tenant. The default token and scheduler serve the default company.
 Catalogue metadata and default-company aggregate values are public.
 
-SQLite stores completed invocations in `var/decisions.sqlite3`. An action is claimed durably
-before its tool runs. Interrupted actions retain an unknown outcome for staff reconciliation.
+SQLite records invocations before they begin and updates their outcomes in `var/decisions.sqlite3`. An action is claimed durably
+before its tool runs. An interrupted model call remains in progress for staff inspection. Interrupted actions retain an unknown outcome for staff reconciliation.
 Repeated recorded actions are blocked after one executes or becomes unknown. Approval also
 checks the original decision's code and configuration against the current accepted agent.
 
@@ -222,7 +225,7 @@ Use one service worker when scheduling. Scheduled runs cannot overlap within tha
 - One graph per agent keeps paths inspectable. Multi-agent debate, model-driven policy decisions,
   weighted readiness scores and autonomous handling of ambiguous cases were rejected.
 - Bearer tokens fit a small deployment. An identity provider and staff roles are needed for
-  shared production use with individual accountability.
+  shared production use with individual accountability. Use HTTPS at the ingress for remote access.
 
 ## Limitations
 

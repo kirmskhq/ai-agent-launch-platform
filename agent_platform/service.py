@@ -200,6 +200,8 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
             review(decision_id, body.correct, body.staff, tenant)
         except LookupError as error:
             raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
         return {"ok": True}
 
     @app.post("/api/decisions/{decision_id}/approval")

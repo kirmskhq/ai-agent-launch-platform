@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from agent_platform.cases import is_handover
-from agent_platform.loader import fingerprint
+from agent_platform.loader import fingerprint, load_action
 from agent_platform.settings import paths
 from sandbox.store import TENANT
 
@@ -39,38 +39,13 @@ def database():
         connection.close()
 
 
-def record(agent, payload, output, cost, failed, tenant="default") -> str:
+def record(
+    agent, payload, output, cost, failed, tenant="default", *, decision_id=None, in_progress=False
+) -> str:
     passport = agent.passport
-    decision_id = uuid4().hex
-    action = None
-    if not is_handover(output):
-        if agent.name == "payment-reconciliation" and output.get("invoice_ids"):
-            action = {
-                "tool": "match_statement_line",
-                "arguments": {
-                    "line_id": payload["line"]["id"],
-                    "invoice_ids": output["invoice_ids"],
-                    "fee": output.get("fee", 0),
-                },
-            }
-        if agent.name == "refund-requests":
-            choice = output.get("decision")
-            if choice in ("approve", "propose"):
-                action = {
-                    "tool": "issue_refund",
-                    "arguments": {
-                        "request_id": payload["request"]["id"],
-                        "amount": output["amount"],
-                    },
-                }
-            elif choice == "decline":
-                action = {
-                    "tool": "decline_refund",
-                    "arguments": {
-                        "request_id": payload["request"]["id"],
-                        "reason": output["reason"],
-                    },
-                }
+    decision_id = decision_id or uuid4().hex
+    builder = load_action(agent.path)
+    action = builder(payload, output) if builder and not is_handover(output) else None
     state = "answered"
     if action and passport.autonomy != "advise":
         state = (
@@ -80,12 +55,25 @@ def record(agent, payload, output, cost, failed, tenant="default") -> str:
         )
     else:
         action = None
+    if in_progress:
+        state = "in_progress"
     with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if action:
+            existing = db.execute(
+                "SELECT id FROM decisions WHERE tenant=? AND agent=? AND action=? "
+                "AND state IN ('pending','ready','unknown','executed')",
+                (tenant, agent.name, json.dumps(action)),
+            ).fetchone()
+            if existing:
+                state = "duplicate"
         db.execute(
             "INSERT INTO decisions (id,tenant,agent,created_at,payload,output,cost,model,failed,"
             "reviewed,reviewer,action,state,action_result,minutes,hour_cost,error_cost,"
             "fingerprint) "
-            "VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET output=excluded.output,cost=excluded.cost,"
+            "failed=excluded.failed,action=excluded.action,state=excluded.state",
             (
                 decision_id,
                 tenant,
@@ -127,6 +115,11 @@ def review(decision_id, correct, reviewer, tenant="default"):
     if not reviewer.strip():
         raise ValueError("reviewer is required")
     with database() as db:
+        row = db.execute(
+            "SELECT state FROM decisions WHERE id=? AND tenant=?", (decision_id, tenant)
+        ).fetchone()
+        if row and row["state"] == "in_progress":
+            raise ValueError("wait for the decision to finish")
         changed = db.execute(
             "UPDATE decisions SET reviewed=?, reviewer=? WHERE id=? AND tenant=?",
             (int(correct), reviewer, decision_id, tenant),

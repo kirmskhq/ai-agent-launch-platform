@@ -41,6 +41,12 @@ jobs:
 
   exams:
     name: Exams on real models
+    # Pull requests carry acceptance evidence. Avoid spending the free daily budget twice
+    # when the same code is merged, and serialize exams across branches sharing a key.
+    if: github.event_name != 'push'
+    concurrency:
+      group: real-model-exams
+      cancel-in-progress: false
     needs: checks
     runs-on: ubuntu-latest
     env:

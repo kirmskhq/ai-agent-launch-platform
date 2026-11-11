@@ -63,6 +63,11 @@ def test_approval_executes_once_and_pending_saves_nothing(workspace, monkeypatch
 
     a = agent(workspace)
     a.name = "refund-requests"
+    from agent_platform.settings import ROOT
+
+    (a.path / "action.py").write_text(
+        (ROOT / "agents" / "refund-requests" / "action.py").read_text()
+    )
     a.passport = a.passport.model_copy(
         update={"autonomy": "act_after_approval", "tools": ["issue_refund"]}
     )
@@ -88,6 +93,11 @@ def test_changed_agent_cannot_execute_old_approval(workspace, monkeypatch):
 
     a = agent(workspace)
     a.name = "refund-requests"
+    from agent_platform.settings import ROOT
+
+    (a.path / "action.py").write_text(
+        (ROOT / "agents" / "refund-requests" / "action.py").read_text()
+    )
     a.passport = a.passport.model_copy(update={"autonomy": "act_after_approval"})
     monkeypatch.setattr(runner, "require_running", lambda name: a)
     decision = record(
@@ -96,3 +106,14 @@ def test_changed_agent_cannot_execute_old_approval(workspace, monkeypatch):
     a.passport = a.passport.model_copy(update={"error_cost": 8})
     with pytest.raises(ValueError, match="changed since"):
         execute(decision, approved_by="Dana")
+
+
+def test_in_progress_call_is_durable_and_cannot_be_reviewed(workspace):
+    a = agent(workspace)
+    decision = record(a, {}, {"handover": True}, 0, False, in_progress=True)
+    assert decisions()[0]["state"] == "in_progress"
+    with pytest.raises(ValueError, match="finish"):
+        review(decision, True, "Dana")
+    record(a, {}, {"category": "travel"}, 0.1, False, decision_id=decision)
+    assert len(decisions()) == 1
+    assert decisions()[0]["state"] == "answered"

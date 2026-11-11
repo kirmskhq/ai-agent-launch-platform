@@ -263,7 +263,14 @@ def examine(
     for case, case_runs in zip(cases, results, strict=True):
         for k, run in enumerate(case_runs):
             if run.outcome == "infra_failure" and not provider_down:
-                case_runs[k] = context.copy().run(_run_once, graph, case, matches, model)
+                replacement = context.copy().run(_run_once, graph, case, matches, model)
+                case_runs[k] = replacement.model_copy(
+                    update={
+                        "cost": replacement.cost + run.cost,
+                        "model_calls": replacement.model_calls + run.model_calls,
+                        "latency_s": replacement.latency_s + run.latency_s,
+                    }
+                )
                 provider_down = case_runs[k].outcome == "infra_failure"
     results = [_settle(case, runs) for case, runs in zip(cases, results, strict=True)]
 

@@ -80,6 +80,12 @@ def load_job(agent_dir: Path) -> Any | None:
     return _import(agent_dir, "job.py")
 
 
+def load_action(agent_dir: Path) -> Any | None:
+    if not (agent_dir / "action.py").is_file():
+        return None
+    return _import(agent_dir, "action.py").build_action
+
+
 def check_code(agent_dir: Path) -> list[str]:
     problems = []
     graph_file = agent_dir / "graph.py"

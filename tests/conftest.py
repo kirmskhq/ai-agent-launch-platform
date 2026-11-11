@@ -103,4 +103,19 @@ def make_agent(workspace: Path, name: str, **changes) -> Path:
         else:
             passport[key] = value
     (dst / "agent.yaml").write_text(yaml.safe_dump(passport), encoding="utf-8")
+    set_proposal(dst, name=name)
     return dst
+
+
+def set_proposal(agent_dir: Path, **changes) -> None:
+    """Change top-level fields of an agent's proposal.yaml (None removes the field)."""
+    path = agent_dir / "proposal.yaml"
+    proposal = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for key, value in changes.items():
+        if value is None:
+            proposal.pop(key, None)
+        elif isinstance(value, dict) and isinstance(proposal.get(key), dict):
+            proposal[key] = {**proposal[key], **value}
+        else:
+            proposal[key] = value
+    path.write_text(yaml.safe_dump(proposal), encoding="utf-8")

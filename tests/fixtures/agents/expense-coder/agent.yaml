@@ -15,6 +15,7 @@ metric:
   baseline: 60
   target: 95
 model: mock
+autonomy: act_alone
 lifecycle: live
 exam:
   min_accuracy: 0.75

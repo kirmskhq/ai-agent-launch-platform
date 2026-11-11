@@ -137,7 +137,7 @@ class ExamReport(BaseModel):
 # ── scoring ──────────────────────────────────────────────────────────────────────────────
 
 
-def _canonical(value: Any) -> Any:
+def canonical(value: Any) -> Any:
     """Normalise for comparison: case and spacing in text, numbers to 2 decimals, list order."""
     if isinstance(value, bool) or value is None:
         return value
@@ -146,20 +146,20 @@ def _canonical(value: Any) -> Any:
     if isinstance(value, str):
         return " ".join(value.casefold().split())
     if isinstance(value, list):
-        return sorted((_canonical(v) for v in value), key=repr)
+        return sorted((canonical(v) for v in value), key=repr)
     if isinstance(value, dict):
-        return {k: _canonical(v) for k, v in value.items()}
+        return {k: canonical(v) for k, v in value.items()}
     return value
 
 
 def make_matcher(exam: Exam) -> Matcher:
     def matches(output: Any, expected: Any) -> bool:
         if exam.scoring == "exact" or not isinstance(expected, dict):
-            return _canonical(output) == _canonical(expected)
+            return canonical(output) == canonical(expected)
         if not isinstance(output, dict):
             return False
         keys = exam.fields or list(expected)
-        return all(_canonical(output.get(k)) == _canonical(expected.get(k)) for k in keys)
+        return all(canonical(output.get(k)) == canonical(expected.get(k)) for k in keys)
 
     return matches
 

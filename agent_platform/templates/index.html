@@ -40,6 +40,23 @@ An agent runs only after it passes its exam on real past cases.</p>
 </table>
 </div>
 {% endif %}
+{% if proposals %}
+<h2>Proposals at the readiness checkpoint</h2>
+<div class="wrap">
+<table>
+  <tr><th>Proposal</th><th>Department</th><th class="num">Coverage</th><th class="num">Agreement</th>
+    <th>Platform recommends</th><th>Decision</th></tr>
+  {% for rd in proposals %}
+  <tr><td><a href="/proposals/{{ rd.name }}">{{ rd.proposal.title if rd.proposal else rd.name }}</a></td>
+    <td>{{ rd.proposal.department if rd.proposal else "-" }}</td>
+    <td class="num">{{ (rd.reality.coverage | pct) if rd.reality else "-" }}</td>
+    <td class="num">{{ (rd.reality.agreement | pct) if rd.reality else "-" }}</td>
+    <td>{{ (rd.recommended | replace("_", " ")) if rd.recommended else "proposal invalid" }}</td>
+    <td>{{ (rd.decision.outcome | replace("_", " ")) if rd.decision else "not written" }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
 <p class="label">Projected effect comes from the exam, at the lower confidence bound of
 accuracy. All amounts in the platform currency; all times in UTC.
 JSON: <a href="/api/agents">/api/agents</a></p>

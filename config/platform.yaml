@@ -9,3 +9,17 @@ usd_rate: 1.0
 
 # Working hours in one full-time staff month, used to express time saved as staff months.
 hours_per_staff_month: 160
+
+# The bar every proposal clears before any agent code is written (`agents readiness`).
+readiness:
+  # Past cases two staff members run through the written process.
+  min_reality_cases: 30
+  # Share of those cases the written rules settle without judgement calls.
+  min_coverage: 0.80
+  # Share of those cases where both staff reach the same answer.
+  # It is also the ceiling for the agent's accuracy threshold.
+  min_agreement: 0.85
+  # An agent may act alone only if its errors can be undone and cost at most this much.
+  act_alone_max_error_cost: 50
+  # Below this best-case monthly staff saving, an agent is not worth building.
+  min_monthly_value: 1000

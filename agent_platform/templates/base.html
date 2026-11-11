@@ -21,6 +21,7 @@
   main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
   a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  nav { display: flex; gap: 20px; margin-bottom: 24px; }
   h1 { font-size: 24px; margin: 0 0 4px; }
   h2 { font-size: 17px; margin: 32px 0 8px; }
   p.lead { color: var(--muted); margin: 0 0 20px; }
@@ -54,6 +55,11 @@
 </head>
 <body>
 <main>
+<nav aria-label="Platform">
+  <a href="/">Catalogue</a>
+  <a href="/operations">Review decisions</a>
+  <a href="/docs">API</a>
+</nav>
 {% block body %}{% endblock %}
 </main>
 </body>

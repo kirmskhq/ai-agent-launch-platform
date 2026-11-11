@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from agent_platform.cases import is_handover
+from agent_platform.loader import fingerprint
 from agent_platform.settings import paths
 from sandbox.store import TENANT
 
@@ -17,13 +18,20 @@ def database():
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=30)
     connection.row_factory = sqlite3.Row
-    connection.execute("""CREATE TABLE IF NOT EXISTS decisions (
-        id TEXT PRIMARY KEY, tenant TEXT NOT NULL, agent TEXT NOT NULL,
-        created_at TEXT NOT NULL, payload TEXT NOT NULL, output TEXT NOT NULL,
-        cost REAL NOT NULL, model TEXT NOT NULL, failed INTEGER NOT NULL,
-        reviewed INTEGER, reviewer TEXT, action TEXT, state TEXT NOT NULL,
-        action_result TEXT, minutes REAL NOT NULL, hour_cost REAL NOT NULL,
-        error_cost REAL NOT NULL)""")
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("""CREATE TABLE IF NOT EXISTS decisions (
+            id TEXT PRIMARY KEY, tenant TEXT NOT NULL, agent TEXT NOT NULL,
+            created_at TEXT NOT NULL, payload TEXT NOT NULL, output TEXT NOT NULL,
+            cost REAL NOT NULL, model TEXT NOT NULL, failed INTEGER NOT NULL,
+            reviewed INTEGER, reviewer TEXT, action TEXT, state TEXT NOT NULL,
+            action_result TEXT, minutes REAL NOT NULL, hour_cost REAL NOT NULL,
+            error_cost REAL NOT NULL)""")
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(decisions)")}
+        if "fingerprint" not in columns:
+            connection.execute(
+                "ALTER TABLE decisions ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''"
+            )
     try:
         with connection:
             yield connection
@@ -74,7 +82,10 @@ def record(agent, payload, output, cost, failed, tenant="default") -> str:
         action = None
     with database() as db:
         db.execute(
-            "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,?,?,?)",
+            "INSERT INTO decisions (id,tenant,agent,created_at,payload,output,cost,model,failed,"
+            "reviewed,reviewer,action,state,action_result,minutes,hour_cost,error_cost,"
+            "fingerprint) "
+            "VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,?,?,?,?)",
             (
                 decision_id,
                 tenant,
@@ -90,6 +101,7 @@ def record(agent, payload, output, cost, failed, tenant="default") -> str:
                 passport.baseline.minutes_per_case,
                 passport.baseline.staff_cost_per_hour,
                 passport.error_cost,
+                fingerprint(agent.path, passport),
             ),
         )
     return decision_id
@@ -136,11 +148,15 @@ def execute(decision_id, tenant="default", *, approved_by=None, reject=False):
             raise LookupError("decision not found")
         if row["state"] not in ("ready", "pending"):
             return dict(row)
-        if row["state"] == "pending" and not approved_by:
+        if (row["state"] == "pending") and not (approved_by and approved_by.strip()):
             raise ValueError("approval requires a staff name")
         agent = require_running(row["agent"])
+        if row["fingerprint"] != fingerprint(agent.path, agent.passport):
+            raise ValueError("agent changed since this decision; collect a fresh decision")
         if agent.passport.autonomy == "advise":
             raise ValueError("agent may only advise")
+        if agent.passport.autonomy == "act_after_approval" and not approved_by:
+            raise ValueError("current passport requires staff approval")
         if reject:
             db.execute(
                 "UPDATE decisions SET state='rejected', reviewer=? WHERE id=?",

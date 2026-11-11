@@ -48,7 +48,7 @@ REALITY_TEST_FILE = Path("readiness") / "reality_test.jsonl"
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class Person(_Strict):

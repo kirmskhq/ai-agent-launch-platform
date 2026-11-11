@@ -62,11 +62,11 @@ def require_token(
 
 class ReviewRequest(BaseModel):
     correct: bool
-    staff: str = Field(min_length=1)
+    staff: str = Field(min_length=1, pattern=r"\S")
 
 
 class ApprovalRequest(BaseModel):
-    staff: str = Field(min_length=1)
+    staff: str = Field(min_length=1, pattern=r"\S")
     reject: bool = False
 
 

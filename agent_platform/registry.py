@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from agent_platform.cases import check_case_sets
 from agent_platform.config import models_config
-from agent_platform.exam import ExamReport, acceptance_report_path, load_report
+from agent_platform.exam import ExamReport, acceptance_report_path, load_report, verdict
 from agent_platform.loader import check_code, fingerprint
 from agent_platform.passport import NAME_PATTERN, Passport, PassportError, load_passport
 from agent_platform.readiness import (
@@ -165,6 +165,8 @@ def derive_status(
         return "not_accepted", ["the agent changed after its exam; rerun the exam"]
     if not report.passed:
         return "not_accepted", list(report.reasons) or ["the exam was not passed"]
+    if problems := verdict(report):
+        return "not_accepted", problems
     return "running", []
 
 

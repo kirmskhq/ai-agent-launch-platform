@@ -111,8 +111,9 @@ def cmd_propose(args: argparse.Namespace) -> int:
 
 def print_report(r) -> None:
     c = r.counts
+    label = "DEV" if r.case_set == "dev" else "PASS" if r.passed else "FAIL"
     print(
-        f"{'PASS' if r.passed else 'FAIL'} {r.agent} [{r.model}, {r.measured_on}, "
+        f"{label} {r.agent} [{r.model}, {r.measured_on}, "
         f"{r.case_set} {r.cases_total} cases x {r.runs_per_case} runs]"
     )
     print(
@@ -305,6 +306,36 @@ def cmd_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_accept_report(args: argparse.Namespace) -> int:
+    from agent_platform.exam import acceptance_report_path, load_report, save_report
+    from agent_platform.loader import fingerprint
+    from agent_platform.readiness import assess
+    from agent_platform.registry import derive_status, find
+
+    report = load_report(args.report)
+    agent = find(report.agent)
+    if agent is None or agent.passport is None:
+        print("FAIL report does not name a valid agent")
+        return 1
+    status, reasons = derive_status(
+        agent.passport, report, fingerprint(agent.path, agent.passport), assess(agent.path)
+    )
+    if status != "running":
+        print("FAIL " + "; ".join(reasons))
+        return 1
+    target = acceptance_report_path(agent.name)
+    save_report(report, target)
+    print(f"accepted {agent.name} on {report.model}")
+    return 0
+
+
+def cmd_value(args: argparse.Namespace) -> int:
+    from agent_platform.production import measured
+
+    print(json.dumps(measured(args.agent, weeks=args.weeks), indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agents", description="Take AI agents from a department's process to production."
@@ -372,6 +403,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("schema", help="Print the passport JSON Schema")
     p.set_defaults(func=cmd_schema)
+
+    p = sub.add_parser("accept-report", help="Install a matching passed real holdout report")
+    p.add_argument("report", type=Path)
+    p.set_defaults(func=cmd_accept_report)
+
+    p = sub.add_parser("value", help="Measured effect and the value checkpoint")
+    p.add_argument("agent")
+    p.add_argument("--weeks", type=int, default=4)
+    p.set_defaults(func=cmd_value)
     return parser
 
 

@@ -187,7 +187,8 @@ are added to the original run's costs.
 
 Agent code, model, settings, cases and run count must match. CI first restores a previous attempt of the same run, then falls back to the latest
 completed branch artifact, and validates its reports before resuming. New branches can reuse
-reports from a merged ancestor commit after the same fingerprint and evidence checks. A complete failed quality exam keeps its
+reports from an ancestor commit in the same repository after the same fingerprint and
+evidence checks. Reports originating from another repository are excluded from automatic reuse. A complete failed quality exam keeps its
 wrong answers and fails again. A changed agent requires a fresh exam.
 
 ```sh

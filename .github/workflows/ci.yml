@@ -72,6 +72,9 @@ jobs:
         run: |
           restore_reports() {
             candidate_dir="$RUNNER_TEMP/exam-reuse-$1"
+            source_repository=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1" \
+              --jq '.head_repository.full_name')
+            [ "$source_repository" = "$GITHUB_REPOSITORY" ] || return 1
             gh run download "$1" --repo "$GITHUB_REPOSITORY" \
               --name exam-reports --dir "$candidate_dir"
           }

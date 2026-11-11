@@ -25,10 +25,10 @@ providers:
     # minute. A 429 carries retry-after, which the gateway waits out.
     max_concurrency: 2
     requests_per_minute: 8
-    retries: 8
-    max_backoff_s: 60
-    max_wait_s: 300
-    timeout_s: 120
+    retries: 3
+    max_backoff_s: 30
+    max_wait_s: 60
+    timeout_s: 60
   mock:
     # A stand-in for tests and runs without a key. Never leaves the machine, costs nothing,
     # and an exam on it never makes an agent accepted.
@@ -47,6 +47,11 @@ models:
     provider: openrouter
     model: meta-llama/llama-3.3-70b-instruct
     price_usd_per_1m: {input: 0.13, output: 0.40}
+  gpt-oss-20b:
+    provider: groq
+    model: openai/gpt-oss-20b
+    price_usd_per_1m: {input: 0.075, output: 0.30}
+    options: {reasoning_effort: low, max_completion_tokens: 1024}
   gpt-oss-120b:
     provider: groq
     model: openai/gpt-oss-120b

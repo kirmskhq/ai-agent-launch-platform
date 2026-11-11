@@ -28,6 +28,20 @@ def rate_limited() -> openai.RateLimitError:
     return openai.RateLimitError("slow down", response=response, body=None)
 
 
+def test_daily_quota_stops_remaining_exam_calls(fake):
+    error = openai.RateLimitError(
+        "Rate limit reached on tokens per day (TPD)",
+        response=httpx.Response(429, request=REQUEST, headers={"Retry-After": "7"}),
+        body=None,
+    )
+    client = fake([error, completion("should stay unused")])
+    with gateway.exam_quota_guard(), use_model("test-real"):
+        for _ in range(2):
+            with pytest.raises(gateway.DailyQuotaExceeded, match="daily quota"):
+                chat("hi")
+    assert len(client.requests) == 1
+
+
 def bad_request() -> openai.BadRequestError:
     return openai.BadRequestError("bad", response=httpx.Response(400, request=REQUEST), body=None)
 

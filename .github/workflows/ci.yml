@@ -41,6 +41,7 @@ jobs:
 
   exams:
     name: Exams on real models
+    timeout-minutes: 45
     # Pull requests carry acceptance evidence. Avoid spending the free daily budget twice
     # when the same code is merged, and serialize exams across branches sharing a key.
     if: github.event_name != 'push'
@@ -50,6 +51,7 @@ jobs:
     needs: checks
     runs-on: ubuntu-latest
     env:
+      PYTHONUNBUFFERED: "1"
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

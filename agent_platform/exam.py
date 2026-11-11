@@ -251,10 +251,18 @@ def examine(
             ]
             for case in cases
         ]
-        results = [
-            _settle(case, [f.result() for f in runs])
-            for case, runs in zip(cases, futures, strict=True)
-        ]
+        results = [[f.result() for f in runs] for runs in futures]
+    # A provider that pauses after bursts can outlast the gateway's retries. Runs that never
+    # reached the model are tried once more, one at a time, before anything is judged.
+    # If a rerun still fails, the provider is down or out of quota: stop rather than send a
+    # string of refused calls, which some providers punish with a longer pause.
+    provider_down = False
+    for case, case_runs in zip(cases, results, strict=True):
+        for k, run in enumerate(case_runs):
+            if run.outcome == "infra_failure" and not provider_down:
+                case_runs[k] = context.copy().run(_run_once, graph, case, matches, model)
+                provider_down = case_runs[k].outcome == "infra_failure"
+    results = [_settle(case, runs) for case, runs in zip(cases, results, strict=True)]
 
     counts = {o: sum(c.outcome == o for c in results) for o in OUTCOMES}
     measured = [c for c in results if c.outcome != "infra_failure"]

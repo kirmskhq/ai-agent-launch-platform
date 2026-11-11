@@ -110,6 +110,55 @@ def test_retries_transient_errors(fake):
     assert client.requests[0]["model"] == "vendor/test-real-1"
 
 
+def test_backoff_doubles_up_to_the_provider_ceiling(fake, monkeypatch):
+    waits = []
+    monkeypatch.setattr(gateway, "_sleep", waits.append)
+    monkeypatch.setattr(gateway.random, "random", lambda: 1.0)
+    fake([rate_limited(), rate_limited(), completion("ok")])
+    with use_model("test-real"):
+        chat("hi")
+    assert waits == [1, 2]
+    assert gateway._backoff(10, 60) == 60
+
+
+def limited(seconds: str) -> openai.RateLimitError:
+    response = httpx.Response(429, request=REQUEST, headers={"Retry-After": seconds})
+    return openai.RateLimitError("slow down", response=response, body=None)
+
+
+def test_waits_as_long_as_the_provider_asks(fake, monkeypatch):
+    waits = []
+    monkeypatch.setattr(gateway, "_sleep", waits.append)
+    fake([limited("7"), completion("ok")])
+    with use_model("test-real"):
+        chat("hi")
+    assert waits[0] >= 7
+
+
+def test_a_long_quota_wait_fails_at_once(fake):
+    client = fake([limited("7200"), completion("never")])
+    with use_model("test-real"), pytest.raises(ModelUnavailable, match="wait 7200s"):
+        chat("hi")
+    assert len(client.requests) == 1
+
+
+def test_requests_are_spaced_to_the_per_minute_limit(monkeypatch):
+    waits = []
+    monkeypatch.setattr(gateway, "_sleep", waits.append)
+    clock = iter([100.0, 100.0, 100.0])
+    monkeypatch.setattr(gateway.time, "monotonic", lambda: next(clock))
+    for _ in range(3):
+        gateway._pace("p", 20)
+    assert waits == pytest.approx([3.0, 6.0])
+
+
+def test_timeouts_are_retried(fake):
+    client = fake([openai.APITimeoutError(request=REQUEST), completion("late but fine")])
+    with use_model("test-real"):
+        assert chat("hi") == "late but fine"
+    assert len(client.requests) == 2
+
+
 def test_gives_up_after_retries(fake):
     client = fake([rate_limited()] * 3)  # retries: 2 in the test config -> 3 attempts
     with use_model("test-real"), track() as ledger, pytest.raises(ModelUnavailable):

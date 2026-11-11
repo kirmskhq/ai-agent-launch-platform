@@ -19,7 +19,27 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ReadinessRules(_Strict):
+    """The bar every proposal has to clear before code is written. Set by the platform team,
+    not by the department proposing the agent."""
+
+    min_reality_cases: int = Field(default=30, ge=10)
+    min_coverage: float = Field(
+        default=0.80, ge=0, le=1, description="Share of past cases the written rules settle"
+    )
+    min_agreement: float = Field(
+        default=0.85, ge=0, le=1, description="Share of past cases two staff answer the same"
+    )
+    act_alone_max_error_cost: float = Field(
+        default=50, ge=0, description="Largest error cost at which an agent may act alone"
+    )
+    min_monthly_value: float = Field(
+        default=1000, ge=0, description="Best-case monthly staff saving worth building for"
+    )
+
+
 class PlatformConfig(_Strict):
+    readiness: ReadinessRules = ReadinessRules()
     currency: str = Field(
         default="USD",
         pattern=r"^[A-Z]{3}$",

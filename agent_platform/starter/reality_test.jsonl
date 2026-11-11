@@ -1,0 +1,2 @@
+{"case_id": "past-001", "first": {"answer": {"decision": "approve"}, "by_rules": true, "note": ""}, "second": {"answer": {"decision": "approve"}, "by_rules": true, "note": ""}}
+{"case_id": "past-002", "first": {"answer": {"decision": "refer"}, "by_rules": false, "note": "rule did not say what to do with a partial payment"}, "second": {"answer": {"decision": "approve"}, "by_rules": true, "note": ""}}

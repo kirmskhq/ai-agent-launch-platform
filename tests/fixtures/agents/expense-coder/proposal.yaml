@@ -1,0 +1,64 @@
+name: expense-coder
+title: Expense line coding
+department: Finance operations
+owner: {name: Dana Whitfield, role: Head of accounts payable}
+problem: Expense lines wait up to three days for a ledger category, which delays the month-end close.
+process:
+  steps:
+    - id: read
+      does: Read the expense line and its amount
+      by: AP clerk
+      inputs: [expense line]
+      outputs: [description, amount]
+      systems: [expense tool]
+    - id: limit
+      does: Send lines above the approval limit to the controller
+      by: AP clerk
+      inputs: [amount]
+      outputs: [routed line]
+      decision: over-limit
+    - id: code
+      does: Pick the ledger category from the description
+      by: AP clerk
+      inputs: [description]
+      outputs: [category]
+      systems: [ledger]
+      decision: category
+  decisions:
+    - id: over-limit
+      question: Is the amount above 1,000?
+      rule: Amounts above 1,000 always go to the controller, whatever the category.
+    - id: category
+      question: Which ledger category fits?
+      rule: Transport and lodging are travel; hardware is equipment; food and drink are meals.
+  exceptions:
+    - when: The description fits no category
+      then: Ask the employee and park the line
+  signed_off: {by: Dana Whitfield, signed_on: 2026-09-14}
+reality_test:
+  staff: [Priya Raman, Tom Becker]
+error:
+  cost: 5
+  reversible: true
+  how_undone: The clerk recodes the line before the period closes.
+autonomy: act_alone
+baseline:
+  cases_per_month: 2000
+  minutes_per_case: 3
+  staff_cost_per_hour: 40
+metric:
+  name: Expense lines coded within one day
+  unit: percent
+  baseline: 60
+  target: 95
+guardrail:
+  name: Lines recoded at month end
+  unit: percent
+  current: 2
+  must_stay: below
+  limit: 4
+decision:
+  outcome: build
+  reason: Rules settle most lines, two clerks agree on nine in ten, and errors are cheap to undo.
+  by: Dana Whitfield
+  decided_on: 2026-09-20

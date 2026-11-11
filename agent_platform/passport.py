@@ -99,6 +99,11 @@ class Passport(_Strict):
     error_cost: float = Field(ge=0, description="Cost of one wrong answer that goes out")
     metric: Metric
     model: str = Field(description="Alias from config/models.yaml")
+    autonomy: Literal["advise", "act_after_approval", "act_alone"] = Field(
+        default="advise",
+        description="advise: a person acts on the answer; act_after_approval: the agent acts "
+        "once a person approves; act_alone: the agent acts. Capped by the readiness check.",
+    )
     schedule: str | None = Field(default=None, description="cron, 5 fields, UTC")
     lifecycle: Literal["draft", "live", "retired"] = Field(
         default="draft",

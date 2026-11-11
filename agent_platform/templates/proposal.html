@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ p.title if p else rd.name }}{% endblock %}
+{% block body %}
+<p><a href="/">&larr; All agents</a></p>
+<h1>{{ p.title if p else rd.name }}</h1>
+<p class="lead"><span class="status s-draft">proposal</span>
+  {% if p %}&nbsp;{{ p.department }} &middot; owner {{ p.owner.name }}, {{ p.owner.role }}{% endif %}</p>
+{% if p %}
+<h2>The problem</h2>
+<p>{{ p.problem }}</p>
+<h2>Process today</h2>
+<div class="wrap">
+<table>
+  <tr><th>Step</th><th>Who</th><th>Inputs</th><th>Outputs</th><th>Systems</th></tr>
+  {% for s in p.process.steps %}
+  <tr><td>{{ s.does }}{% if s.decision %}<div class="label">decision: {{ s.decision }}</div>{% endif %}</td>
+    <td>{{ s.by }}</td><td>{{ s.inputs | join(", ") }}</td><td>{{ s.outputs | join(", ") }}</td>
+    <td>{{ s.systems | join(", ") }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% if p.process.decisions %}
+<h2>Decisions and their written rules</h2>
+<dl class="kv">{% for d in p.process.decisions %}<dt>{{ d.question }}</dt><dd>{{ d.rule }}</dd>{% endfor %}</dl>
+{% endif %}
+{% if p.process.exceptions %}
+<h2>Exceptions</h2>
+<dl class="kv">{% for e in p.process.exceptions %}<dt>{{ e.when }}</dt><dd>{{ e.then }}</dd>{% endfor %}</dl>
+{% endif %}
+{% endif %}
+{% include "_readiness.html" %}
+{% endblock %}

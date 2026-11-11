@@ -45,15 +45,31 @@ def require_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> str:
     expected = os.environ.get("AGENTS_API_TOKEN", "")
-    tenants = json.loads(os.environ.get("AGENTS_TENANT_TOKENS", "{}"))
+    try:
+        tenants = json.loads(os.environ.get("AGENTS_TENANT_TOKENS", "{}"))
+        if not isinstance(tenants, dict) or any(
+            not isinstance(tenant, str)
+            or not tenant.strip()
+            or not isinstance(token, str)
+            or not token.strip()
+            for tenant, token in tenants.items()
+        ):
+            raise ValueError("tenant names and tokens must be nonempty strings")
+        tokens = list(tenants.values())
+        if len(tokens) != len(set(tokens)) or (expected and expected in tokens):
+            raise ValueError("each tenant and the default company need distinct tokens")
+    except (ValueError, TypeError) as error:
+        raise HTTPException(503, f"invalid AGENTS_TENANT_TOKENS: {error}") from error
     if credentials:
         for tenant, token in tenants.items():
             if hmac.compare_digest(credentials.credentials.encode(), token.encode()):
                 return tenant
-    if not expected:
+    if not expected and not tenants:
         raise HTTPException(503, "AGENTS_API_TOKEN is not set; running agents is disabled")
-    if credentials is None or not hmac.compare_digest(
-        credentials.credentials.encode(), expected.encode()
+    if (
+        not expected
+        or credentials is None
+        or not hmac.compare_digest(credentials.credentials.encode(), expected.encode())
     ):
         raise HTTPException(401, "missing or wrong bearer token")
 
@@ -122,8 +138,10 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
         if start_scheduler:
             sched.start()
             log.info("scheduler started (UTC)")
-        yield
-        sched.stop()
+        try:
+            yield
+        finally:
+            sched.stop()
 
     app = FastAPI(title="Agent launch platform", lifespan=lifespan)
 

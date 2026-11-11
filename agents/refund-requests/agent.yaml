@@ -15,7 +15,7 @@ metric:
   unit: percent
   baseline: 40
   target: 85
-model: qwen3.6
+model: gpt-oss-120b
 autonomy: act_alone
 tools:
   - list_pending_refund_requests

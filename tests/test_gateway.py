@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import httpx
 import openai
 import pytest
+import yaml
 
 from agent_platform import gateway
 from agent_platform.gateway import (
@@ -172,6 +173,17 @@ def test_does_not_retry_a_bad_request(fake):
     with use_model("test-real"), pytest.raises(GatewayError, match="BadRequestError"):
         chat("hi")
     assert len(client.requests) == 1
+
+
+def test_model_options_go_with_the_request(fake, workspace):
+    path = workspace / "config" / "models.yaml"
+    models = yaml.safe_load(path.read_text(encoding="utf-8"))
+    models["models"]["test-real"]["options"] = {"reasoning_effort": "low"}
+    path.write_text(yaml.safe_dump(models), encoding="utf-8")
+    client = fake([completion("ok")])
+    with use_model("test-real"):
+        chat("hi")
+    assert client.requests[0]["extra_body"] == {"reasoning_effort": "low"}
 
 
 def test_proxy_uses_the_alias(fake):

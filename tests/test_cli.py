@@ -19,7 +19,7 @@ def test_validate(capsys):
 def test_exam_writes_dev_reports_outside_the_acceptance_folder(workspace, capsys):
     assert main(["exam", "expense-coder", "--set", "dev", "--model", "mock"]) == 0
     out = capsys.readouterr().out
-    assert "FAIL expense-coder [mock, mock, dev 5 cases x 1 runs]" in out
+    assert "DEV expense-coder [mock, mock, dev 5 cases x 1 runs]" in out
     assert (workspace / "var" / "exams" / "expense-coder.dev.json").is_file()
     assert not (workspace / "reports" / "expense-coder.json").exists()
 

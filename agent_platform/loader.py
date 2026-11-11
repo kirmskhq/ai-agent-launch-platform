@@ -112,6 +112,28 @@ def fingerprint(agent_dir: Path, passport: Passport) -> str:
     holdout = cases_path(agent_dir, "holdout")
     if holdout.is_file():
         h.update(holdout.read_bytes().replace(b"\r\n", b"\n"))
-    exam_inputs = passport.model_dump(include={"model", "exam", "baseline", "error_cost"})
+    from agent_platform.config import models_config, platform_config
+    from agent_platform.settings import ROOT
+    from agent_platform.tools import tools_config
+
+    config = models_config()
+    model = config.models.get(passport.model)
+    if model:
+        h.update(model.model_dump_json().encode())
+        h.update(config.providers[model.provider].model_dump_json().encode())
+    h.update(platform_config().model_dump_json().encode())
+    h.update(tools_config().model_dump_json().encode())
+    for relative in (
+        "agent_platform/gateway.py",
+        "agent_platform/tools.py",
+        "agent_platform/runner.py",
+        "agent_platform/production.py",
+        "sandbox/tools.py",
+        "sandbox/store.py",
+    ):
+        h.update((ROOT / relative).read_bytes().replace(b"\r\n", b"\n"))
+    exam_inputs = passport.model_dump(
+        include={"model", "exam", "baseline", "error_cost", "autonomy", "tools"}
+    )
     h.update(json.dumps(exam_inputs, sort_keys=True).encode())
     return h.hexdigest()[:16]

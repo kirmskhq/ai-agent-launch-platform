@@ -16,7 +16,7 @@ from agent_platform.settings import paths
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class ReadinessRules(_Strict):

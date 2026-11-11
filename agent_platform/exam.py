@@ -21,8 +21,10 @@ estimate: 28 right out of 30 is 93%, but it does not prove the agent is 93% accu
 """
 
 import copy
+import json
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -216,7 +218,8 @@ def _settle(case: dict, runs: list[Run]) -> CaseResult:
         id=str(case["id"]),
         expected=case["expected"],
         outcome=next(o for o in WORST_FIRST if o in outcomes),
-        consistent=len(outcomes) == 1,
+        consistent=len({json.dumps(canonical(r.output), sort_keys=True) for r in runs}) == 1
+        and len(outcomes) == 1,
         runs=runs,
     )
 
@@ -266,7 +269,7 @@ def examine(
 
     counts = {o: sum(c.outcome == o for c in results) for o in OUTCOMES}
     measured = [c for c in results if c.outcome != "infra_failure"]
-    runs = [r for c in measured for r in c.runs]
+    runs = [r for c in results for r in c.runs]
     answered = counts["answered_correct"] + counts["answered_wrong"]
     accuracy = counts["answered_correct"] / answered if answered else None
     lower = (
@@ -339,6 +342,10 @@ def verdict(r: ExamReport) -> list[str]:
     reasons = []
     if r.case_set != "holdout":
         reasons.append("dev cases are for building the agent; only a holdout exam can pass")
+    if r.runs_per_case != 3:
+        reasons.append("acceptance requires three runs per holdout case")
+    if r.confidence != 0.90:
+        reasons.append("acceptance requires 90% confidence")
     if r.counts["infra_failure"]:
         reasons.append(
             f"exam incomplete: {r.counts['infra_failure']} of {r.cases_total} cases could not "
@@ -454,7 +461,16 @@ def default_report_path(report: ExamReport, passport_model: str) -> Path:
 
 def save_report(report: ExamReport, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(report.model_dump_json(indent=1), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False
+    ) as stream:
+        stream.write(report.model_dump_json(indent=1))
+        temporary = stream.name
+    try:
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def load_report(path: Path) -> ExamReport:

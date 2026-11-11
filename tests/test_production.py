@@ -10,6 +10,7 @@ from sandbox.store import STORE, TENANT
 def agent(workspace):
     return SimpleNamespace(
         name="expense-coder",
+        path=workspace / "agents" / "expense-coder",
         passport=load_passport(workspace / "agents" / "expense-coder"),
     )
 
@@ -80,3 +81,18 @@ def test_approval_executes_once_and_pending_saves_nothing(workspace, monkeypatch
     assert execute(second, approved_by="Dana")["state"] == "duplicate"
     assert len(calls) == 1
     assert measured(a.name)["staff_saving"] == 2
+
+
+def test_changed_agent_cannot_execute_old_approval(workspace, monkeypatch):
+    from agent_platform import runner
+
+    a = agent(workspace)
+    a.name = "refund-requests"
+    a.passport = a.passport.model_copy(update={"autonomy": "act_after_approval"})
+    monkeypatch.setattr(runner, "require_running", lambda name: a)
+    decision = record(
+        a, {"request": {"id": "RR-1"}}, {"decision": "propose", "amount": 100}, 0, False
+    )
+    a.passport = a.passport.model_copy(update={"error_cost": 8})
+    with pytest.raises(ValueError, match="changed since"):
+        execute(decision, approved_by="Dana")

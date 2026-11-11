@@ -23,20 +23,90 @@ def _pct(x: float | None) -> str:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    from agent_platform.registry import check_agent
+    from agent_platform.registry import check_agent, check_readiness, proposals
 
     dirs = _dirs(args.agents)
-    if not dirs:
+    proposal_dirs = [] if args.agents else [paths().agents / r.name for r in proposals()]
+    if not dirs and not proposal_dirs:
         print(f"no agents in {paths().agents}")
         return 0
     failed = 0
-    for d in dirs:
-        problems = check_agent(d) if d.is_dir() else ["no such folder"]
-        print(f"{'FAIL' if problems else 'ok  '} {d.name}")
+    for d in dirs + proposal_dirs:
+        if not d.is_dir():
+            problems = ["no such folder"]
+        elif (d / "agent.yaml").is_file():
+            problems = check_agent(d)
+        else:
+            problems = check_readiness(d)
+        kind = "" if (d / "agent.yaml").is_file() else " (proposal)"
+        print(f"{'FAIL' if problems else 'ok  '} {d.name}{kind}")
         for p in problems:
             print(f"     {p}")
         failed += bool(problems)
     return 1 if failed else 0
+
+
+def print_readiness(r) -> None:
+    print(f"{r.name}: {r.summary}")
+    for problem in r.problems:
+        print(f"     problem: {problem}")
+    for c in r.checks:
+        print(f"     {'pass' if c.passed else 'FAIL'}  {c.label}: {c.detail}")
+    if r.reality is not None:
+        print(
+            f"     coverage {r.reality.coverage:.0%}, agreement {r.reality.agreement:.0%} "
+            f"(the ceiling for the exam threshold), most autonomy allowed: {r.max_autonomy}"
+        )
+    for reason in r.reasons:
+        print(f"     reason: {reason}")
+    d = r.decision
+    if d:
+        print(f"     written decision: {d.outcome} by {d.by} on {d.decided_on}: {d.reason}")
+    print(f"     cleared to build: {'yes' if r.cleared_to_build else 'no'}")
+
+
+def cmd_readiness(args: argparse.Namespace) -> int:
+    from agent_platform.readiness import PROPOSAL_FILE, assess
+
+    root = paths().agents
+    names = args.agents or sorted(
+        p.name
+        for p in (root.iterdir() if root.is_dir() else [])
+        if (p / PROPOSAL_FILE).is_file() and not p.name.startswith((".", "_"))
+    )
+    if not names:
+        print(f"no proposals in {root}")
+        return 0
+    failed = 0
+    for name in names:
+        r = assess(root / name)
+        print_readiness(r)
+        failed += bool(r.problems)
+    return 1 if failed else 0
+
+
+def cmd_propose(args: argparse.Namespace) -> int:
+    import re
+    import shutil
+
+    from agent_platform.passport import NAME_PATTERN
+
+    if not re.fullmatch(NAME_PATTERN, args.name):
+        print("names use lowercase letters, digits and hyphens, 2 to 41 characters")
+        return 1
+    target = paths().agents / args.name
+    if target.exists():
+        print(f"{target} already exists")
+        return 1
+    starter = Path(__file__).parent / "starter"
+    (target / "readiness").mkdir(parents=True)
+    text = (starter / "proposal.yaml").read_text(encoding="utf-8")
+    (target / "proposal.yaml").write_text(text.replace("NAME", args.name), encoding="utf-8")
+    shutil.copy(starter / "reality_test.jsonl", target / "readiness" / "reality_test.jsonl")
+    print(f"created {target}")
+    print("next: fill in proposal.yaml, run the reality test with two staff members,")
+    print(f"then check it: uv run agents readiness {args.name}")
+    return 0
 
 
 def print_report(r) -> None:
@@ -234,6 +304,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("validate", help="Check passports, code and case files")
     p.add_argument("agents", nargs="*", help="Agent names; all agents if none given")
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("propose", help="Start a proposal: proposal.yaml and a reality test")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_propose)
+
+    p = sub.add_parser("readiness", help="Check proposals before any agent code is written")
+    p.add_argument("agents", nargs="*", help="Names; all proposals if none given")
+    p.set_defaults(func=cmd_readiness)
 
     p = sub.add_parser("exam", help="Run the exam and write the report")
     p.add_argument("agents", nargs="*", help="Agent names; all agents if none given")

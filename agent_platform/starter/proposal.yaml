@@ -1,0 +1,76 @@
+# Proposal for a new agent. Fill this in before anyone writes code, then run:
+#   uv run agents readiness NAME
+# Every line marked "replace" is an example to overwrite.
+
+name: NAME
+title: Short name of the work, for example "Supplier invoice matching"   # replace
+department: Finance operations                                          # replace
+owner: {name: Full Name, role: Head of the team that does the work}     # replace
+problem: What goes wrong today, in one or two plain sentences.          # replace
+
+# How the work is done today, step by step, as the staff actually do it.
+process:
+  steps:
+    - id: receive
+      does: What the person does in this step
+      by: Role that does it
+      inputs: [what they look at]
+      outputs: [what they produce]
+      systems: [system they use]
+    - id: decide
+      does: The judgement call in the middle
+      by: Role that does it
+      inputs: [what they look at]
+      outputs: [the decision]
+      decision: main-decision
+  decisions:
+    - id: main-decision
+      question: The question the person answers
+      rule: The written rule they apply, so that two people reach the same answer.
+  exceptions:
+    - when: A case the rule does not cover
+      then: What happens to it today
+  # The process owner signs once the map matches how the work is really done.
+  # signed_off: {by: Full Name, signed_on: 2026-01-31}
+
+# Two staff members each take the same 30 or more past cases through the written process,
+# without talking to each other. Record both answers in readiness/reality_test.jsonl.
+reality_test:
+  staff: [First Person, Second Person]                                  # replace
+
+# One wrong answer that goes out: what it costs and whether it can be undone.
+error:
+  cost: 0                                                               # replace
+  reversible: true
+  how_undone: Who notices it and how it is put right.                   # replace
+
+# advise | act_after_approval | act_alone. The cost of an error caps this.
+autonomy: advise
+
+# How the work is done today, in numbers.
+baseline:
+  cases_per_month: 1                                                    # replace
+  minutes_per_case: 1                                                   # replace
+  staff_cost_per_hour: 1                                                # replace
+
+# The one business number the agent should move.
+metric:
+  name: Name of the metric                                              # replace
+  unit: days
+  baseline: 3
+  target: 1
+
+# One number that must not get worse while the metric improves.
+guardrail:
+  name: Name of the guardrail                                           # replace
+  unit: percent
+  current: 1
+  must_stay: below
+  limit: 2
+
+# Written by the reviewer after `agents readiness`: build, fix_process or decline.
+# decision:
+#   outcome: build
+#   reason: Why, in a sentence a manager can check.
+#   by: Full Name
+#   decided_on: 2026-02-15

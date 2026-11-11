@@ -5,6 +5,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from agent_platform.config import platform_config
+from agent_platform.readiness import Readiness
 from agent_platform.registry import AgentRecord
 from agent_platform.runner import recent_runs
 
@@ -48,8 +49,16 @@ def summary(agents: list[AgentRecord]) -> dict:
     }
 
 
-def render_index(agents: list[AgentRecord]) -> str:
-    return _env().get_template("index.html").render(agents=agents, summary=summary(agents))
+def render_index(agents: list[AgentRecord], proposals: list[Readiness]) -> str:
+    return (
+        _env()
+        .get_template("index.html")
+        .render(agents=agents, proposals=proposals, summary=summary(agents))
+    )
+
+
+def render_proposal(readiness: Readiness) -> str:
+    return _env().get_template("proposal.html").render(rd=readiness, p=readiness.proposal)
 
 
 def render_agent(agent: AgentRecord) -> str:

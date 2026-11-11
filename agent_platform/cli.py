@@ -152,7 +152,13 @@ def print_report(r) -> None:
 
 def cmd_exam(args: argparse.Namespace) -> int:
     from agent_platform.config import models_config
-    from agent_platform.exam import ExamError, default_report_path, run_exam, save_report
+    from agent_platform.exam import (
+        ExamError,
+        acceptance_report_path,
+        default_report_path,
+        run_exam,
+        save_report,
+    )
     from agent_platform.gateway import has_key
     from agent_platform.passport import PassportError, load_passport
     from agent_platform.registry import record
@@ -192,6 +198,11 @@ def cmd_exam(args: argparse.Namespace) -> int:
             if spec and not has_key(cfg.providers[spec.provider]):
                 print(f"skip {d.name}: no key for {model}")
                 continue
+        checkpoint = args.out or acceptance_report_path(passport.name)
+        if args.resume and (args.set != "holdout" or args.model or args.runs or args.limit):
+            print("FAIL resume requires the complete holdout on the passport model")
+            failed += 1
+            continue
         try:
             report = run_exam(
                 d,
@@ -200,6 +211,8 @@ def cmd_exam(args: argparse.Namespace) -> int:
                 runs_per_case=args.runs,
                 workers=args.workers,
                 limit=args.limit,
+                resume=checkpoint if args.resume else None,
+                checkpoint=checkpoint if args.resume else None,
             )
         except ExamError as e:
             print(f"FAIL {d.name}: {e}")
@@ -344,6 +357,31 @@ def cmd_accept_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_exam(args: argparse.Namespace) -> int:
+    from agent_platform.exam import (
+        ExamError,
+        acceptance_report_path,
+        load_report,
+        prepare_resume,
+        save_report,
+    )
+    from agent_platform.registry import find
+
+    try:
+        report = load_report(args.report)
+        agent = find(report.agent)
+        if agent is None or agent.passport is None:
+            raise ExamError("report names an unknown agent")
+        report = prepare_resume(report, agent.path)
+        save_report(report, acceptance_report_path(report.agent))
+    except (OSError, ValueError, ExamError) as error:
+        print(f"FAIL {error}")
+        return 1
+    pending = sum(run.outcome == "infra_failure" for case in report.cases for run in case.runs)
+    print(f"imported {report.agent}: {pending} infrastructure runs remain")
+    return 0
+
+
 def cmd_value(args: argparse.Namespace) -> int:
     from agent_platform.production import measured
 
@@ -384,6 +422,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--reuse-accepted",
         action="store_true",
         help="Reuse a passed report only when its full code and configuration fingerprint matches",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="Save progress after each run and retry only infrastructure failures",
     )
     p.set_defaults(func=cmd_exam)
 
@@ -427,6 +470,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("accept-report", help="Install a matching passed real holdout report")
     p.add_argument("report", type=Path)
     p.set_defaults(func=cmd_accept_report)
+
+    p = sub.add_parser("import-exam", help="Validate and import a complete or interrupted exam")
+    p.add_argument("report", type=Path)
+    p.set_defaults(func=cmd_import_exam)
 
     p = sub.add_parser("value", help="Measured effect and the value checkpoint")
     p.add_argument("agent")

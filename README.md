@@ -141,6 +141,32 @@ summary before accepting an agent. CI can reuse a passed report from the latest 
 branch run after the installer verifies the complete fingerprint. Changed or failed reports
 require fresh exams. The summary states when an earlier accepted report is reused.
 
+## Resume an interrupted exam
+
+```sh
+uv run agents exam refund-requests --resume
+```
+
+The platform saves an atomic checkpoint after every completed run. A checkpoint contains all
+three slots for every case, including pending slots. Resuming keeps recorded correct answers,
+wrong answers and handovers, and retries only infrastructure failures or unfinished slots.
+The final Wilson bound and costs are recalculated from the combined evidence. Retry costs
+are added to the original run's costs.
+
+Agent code, model, settings, cases and run count must match. CI first restores a previous attempt of the same run, then falls back to the latest
+completed branch artifact, and validates its reports before resuming. A complete failed quality exam keeps its
+wrong answers and fails again. A changed agent requires a fresh exam.
+
+```sh
+uv run agents import-exam /path/to/downloaded/refund-requests.json
+uv run agents exam refund-requests --resume
+```
+
+Reports from the version immediately before checkpoint support have one audited migration.
+It checks their original fingerprint against the pinned Git commit, verifies that inference,
+scoring, calculations and agent loading logic match, and records the source fingerprint.
+Other incompatible reports are rejected. Full Git history is required for that migration.
+
 ## Pull deployment
 
 The running service reads code, passports and acceptance reports from local files. The host

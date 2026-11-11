@@ -17,6 +17,18 @@ providers:
     api_key_env: OPENROUTER_API_KEY
     max_concurrency: 4
     retries: 4
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    # Free plan (console.groq.com/docs/rate-limits): 30 requests and 8K tokens a minute,
+    # 1,000 requests and 200K tokens a day. The token budget binds first: about 8 calls a
+    # minute. A 429 carries retry-after, which the gateway waits out.
+    max_concurrency: 2
+    requests_per_minute: 8
+    retries: 8
+    max_backoff_s: 60
+    max_wait_s: 300
+    timeout_s: 120
   mock:
     # A stand-in for tests and runs without a key. Never leaves the machine, costs nothing,
     # and an exam on it never makes an agent accepted.
@@ -35,6 +47,12 @@ models:
     provider: openrouter
     model: meta-llama/llama-3.3-70b-instruct
     price_usd_per_1m: {input: 0.13, output: 0.40}
+  gpt-oss-120b:
+    provider: groq
+    model: openai/gpt-oss-120b
+    price_usd_per_1m: {input: 0.15, output: 0.60}
+    # A reasoning model; low effort keeps answers short and within the free token budget.
+    options: {reasoning_effort: low}
   mock:
     provider: mock
     model: mock

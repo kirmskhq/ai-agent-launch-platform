@@ -43,6 +43,7 @@ from agent_platform.loader import Graph, fingerprint, load_graph, load_mock_mode
 from agent_platform.passport import Exam, Passport, load_passport
 from agent_platform.settings import ROOT, paths
 from agent_platform.stats import wilson_lower_bound
+from agent_platform.tools import granted
 
 Outcome = Literal[
     "answered_correct",
@@ -250,10 +251,18 @@ def examine(
             ]
             for case in cases
         ]
-        results = [
-            _settle(case, [f.result() for f in runs])
-            for case, runs in zip(cases, futures, strict=True)
-        ]
+        results = [[f.result() for f in runs] for runs in futures]
+    # A provider that pauses after bursts can outlast the gateway's retries. Runs that never
+    # reached the model are tried once more, one at a time, before anything is judged.
+    # If a rerun still fails, the provider is down or out of quota: stop rather than send a
+    # string of refused calls, which some providers punish with a longer pause.
+    provider_down = False
+    for case, case_runs in zip(cases, results, strict=True):
+        for k, run in enumerate(case_runs):
+            if run.outcome == "infra_failure" and not provider_down:
+                case_runs[k] = context.copy().run(_run_once, graph, case, matches, model)
+                provider_down = case_runs[k].outcome == "infra_failure"
+    results = [_settle(case, runs) for case, runs in zip(cases, results, strict=True)]
 
     counts = {o: sum(c.outcome == o for c in results) for o in OUTCOMES}
     measured = [c for c in results if c.outcome != "infra_failure"]
@@ -414,7 +423,10 @@ def run_exam(
     cases = load_cases(cases_path(agent_dir, case_set))[:limit]
     graph = load_graph(agent_dir)
     runs = runs_per_case or (passport.exam.runs_per_case if case_set == "holdout" else 1)
-    with mock_model(responder) if responder else nullcontext():
+    with (
+        mock_model(responder) if responder else nullcontext(),
+        granted(passport.name, passport.tools, can_write=False),
+    ):
         return examine(
             passport,
             graph,

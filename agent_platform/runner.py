@@ -19,6 +19,7 @@ from agent_platform.gateway import GatewayError, Ledger, track, use_model
 from agent_platform.loader import load_graph, load_job
 from agent_platform.registry import AgentRecord, find
 from agent_platform.settings import paths
+from agent_platform.tools import granted
 
 
 class NotRunnable(RuntimeError):
@@ -68,7 +69,9 @@ def invoke(name: str, payload: dict) -> Result:
     agent = require_running(name)
     assert agent.passport is not None
     graph = load_graph(agent.path)
-    output, fell_back, ledger, latency = _call(graph, agent.passport.model, payload)
+    # Answering reads at most; acting on an answer is a separate, approved step.
+    with granted(name, agent.passport.tools, can_write=False):
+        output, fell_back, ledger, latency = _call(graph, agent.passport.model, payload)
     return Result(output, fell_back, ledger.cost, len(ledger.calls), latency)
 
 
@@ -104,8 +107,11 @@ def run_job(name: str, *, trigger: str = "manual") -> dict:
     started = time.perf_counter()
     answered = handed_over = fell_back = 0
     cost = 0.0
-    for payload in job.collect():
-        output, failed, ledger, _ = _call(graph, agent.passport.model, payload)
+    with granted(name, agent.passport.tools, can_write=False):
+        payloads = list(job.collect())
+    for payload in payloads:
+        with granted(name, agent.passport.tools, can_write=False):
+            output, failed, ledger, _ = _call(graph, agent.passport.model, payload)
         cost += ledger.cost
         fell_back += failed
         if is_handover(output):

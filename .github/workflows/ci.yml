@@ -1,0 +1,70 @@
+# Checks on every pull request and on main:
+#   lint, format, passports and case files, LiteLLM config in sync, tests (all without a key).
+# Exams on real models run only when a model key secret is set (OPENAI_API_KEY or
+# OPENROUTER_API_KEY); otherwise the job says so and skips them.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, passports, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --python 3.12
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Passports, code and case files
+        run: uv run agents validate
+      - name: LiteLLM config matches config/models.yaml
+        run: uv run agents litellm-config --check
+      - name: Tests
+        run: uv run pytest -q
+
+  exams:
+    name: Exams on real models
+    needs: checks
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --python 3.12
+      - name: No model key
+        if: env.OPENAI_API_KEY == '' && env.OPENROUTER_API_KEY == ''
+        run: echo "::notice::No model key secret is set; real-model exams were skipped."
+      - name: Holdout exams on each passport's model
+        if: env.OPENAI_API_KEY != '' || env.OPENROUTER_API_KEY != ''
+        run: |
+          set -o pipefail
+          uv run agents exam --skip-without-key | tee exam.txt
+      - name: Exam summary
+        if: always() && hashFiles('exam.txt') != ''
+        run: |
+          { echo '## Exams'; echo '```'; cat exam.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('reports/*.json') != ''
+        with:
+          name: exam-reports
+          path: reports/

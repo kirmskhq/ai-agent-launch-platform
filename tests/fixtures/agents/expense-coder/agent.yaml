@@ -1,0 +1,21 @@
+# Test fixture: codes staff expense lines to a ledger category.
+name: expense-coder
+title: Expense line coding
+department: Finance operations
+owner: Dana Whitfield
+replaces: Finance staff read each expense line and pick its ledger category by hand.
+baseline:
+  cases_per_month: 2000
+  minutes_per_case: 3
+  staff_cost_per_hour: 40
+error_cost: 5
+metric:
+  name: Expense lines coded within one day
+  unit: percent
+  baseline: 60
+  target: 95
+model: mock
+lifecycle: live
+exam:
+  min_accuracy: 0.75
+  min_holdout_cases: 10

@@ -57,7 +57,7 @@ models:
     model: openai/gpt-oss-120b
     price_usd_per_1m: {input: 0.15, output: 0.60}
     # A reasoning model; low effort keeps answers short and within the free token budget.
-    options: {reasoning_effort: low}
+    options: {reasoning_effort: low, max_completion_tokens: 1024}
   mock:
     provider: mock
     model: mock

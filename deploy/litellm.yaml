@@ -38,6 +38,7 @@ model_list:
     max_parallel_requests: 2
     timeout: 60.0
     reasoning_effort: low
+    max_completion_tokens: 1024
 litellm_settings:
   drop_params: true
   num_retries: 2

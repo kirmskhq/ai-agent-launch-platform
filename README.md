@@ -47,6 +47,37 @@ To expose the same sandbox functions over MCP, run this stdio server from an MCP
 uv run python -m sandbox.mcp_server
 ```
 
+## Example agents and recorded acceptance
+
+```mermaid
+flowchart LR
+    P[Process and baseline] --> R{Readiness}
+    R -->|Build| D[Agent and dev cases]
+    D --> E{Holdout exam}
+    E -->|Pass| A[Actions within policy limits]
+    A --> V[Staff reviews and measured value]
+    V --> O[Owner decides scale, redesign or retire]
+```
+
+The example agents completed acceptance on 11 November 2026 using the synthetic holdout sets.
+Counts below are cases. Each case ran three times, and an answered case counts as correct
+only when all three runs were correct.
+
+| Agent | Model on Groq | Answered correctly | Correct handovers | Wrong answers | Accuracy lower bound |
+| --- | --- | ---: | ---: | ---: | ---: |
+| [Payment reconciliation](agents/payment-reconciliation) | GPT-OSS 20B | 32 | 8 | 0 | 95.1% |
+| [Refund requests](agents/refund-requests) | GPT-OSS 120B | 33 | 7 | 0 | 95.3% |
+
+Both exams contain 40 cases and zero infrastructure failures. The accuracy lower bound uses
+90% one-sided confidence. The run summary and downloadable reports preserve the evidence.
+[Recorded acceptance run](https://github.com/kirmskhq/ai-agent-launch-platform/actions/runs/42999716228).
+
+A statement line of 1,837.50 with the reference `inv 1201 + 1202 minus fee` names invoices of
+1,200 and 650. The model proposes those invoice IDs. Rules check ownership, amounts and the
+permitted fee, then record the match. Unclear matches go to finance staff.
+The [written refund policy](sandbox/refund_policy.md) shows the other workflow, including
+refund windows, evidence requirements and the 50-unit approval limit.
+
 ## How a department proposes an agent
 
 ```sh
@@ -138,8 +169,9 @@ Pull-request CI runs real exams when the model's key exists. Exams are serialize
 branches sharing the key. Pushes to main run code checks, and manual CI runs can repeat exams. Results appear in the job summary and the
 exam-reports artifact. CI can pass code checks while skipping exams. Read the actual exam
 summary before accepting an agent. CI can reuse a passed report from the latest completed
-branch run after the installer verifies the complete fingerprint. Changed or failed reports
-require fresh exams. The summary states when an earlier accepted report is reused.
+branch run after the installer verifies the complete fingerprint. Changed agents require
+fresh exams. Infrastructure failures can resume from saved progress, while recorded wrong
+answers keep their original scores. The summary states when an accepted report is reused.
 
 ## Resume an interrupted exam
 
@@ -154,7 +186,9 @@ The final Wilson bound and costs are recalculated from the combined evidence. Re
 are added to the original run's costs.
 
 Agent code, model, settings, cases and run count must match. CI first restores a previous attempt of the same run, then falls back to the latest
-completed branch artifact, and validates its reports before resuming. A complete failed quality exam keeps its
+completed branch artifact, and validates its reports before resuming. New branches can reuse
+reports from an ancestor commit in the same repository after the same fingerprint and
+evidence checks. Reports originating from another repository are excluded from automatic reuse. A complete failed quality exam keeps its
 wrong answers and fails again. A changed agent requires a fresh exam.
 
 ```sh
@@ -217,7 +251,9 @@ answers right or wrong and approve or reject queued actions. API calls use beare
 | GET /api/agents/{name}/value?weeks=4 | Measured value and checkpoint recommendation |
 
 Set AGENTS_TENANT_TOKENS to a JSON object mapping tenant names to distinct tokens for multiple
-companies. The server derives the tenant from the token. Decisions, approvals and in-memory
+companies. Every token must be nonempty and distinct, including the default company token.
+Invalid or duplicate token settings disable authenticated operations with a configuration error.
+The server derives the tenant from the token. Decisions, approvals and in-memory
 sandbox data follow that tenant. The default token and scheduler serve the default company.
 Catalogue metadata and default-company aggregate values are public.
 
@@ -272,6 +308,16 @@ Use one service worker when scheduling. Scheduled runs cannot overlap within tha
   one full exam run per day. Inspect provider headers and logs.
 - A small synthetic holdout leaves uncertainty about real production coverage. A changed
   business process needs fresh cases and another readiness review.
+
+## Code map
+
+| Area | Entry points |
+| --- | --- |
+| Proposal and financial case | [readiness.py](agent_platform/readiness.py), [economics.py](agent_platform/economics.py) |
+| Model access and tool permissions | [gateway.py](agent_platform/gateway.py), [tools.py](agent_platform/tools.py) |
+| Acceptance and resumable exams | [exam.py](agent_platform/exam.py), [registry.py](agent_platform/registry.py) |
+| Decisions, approvals and measured value | [production.py](agent_platform/production.py), [service.py](agent_platform/service.py) |
+| Example implementations | [agents](agents), [sandbox](sandbox) |
 
 ## Development
 

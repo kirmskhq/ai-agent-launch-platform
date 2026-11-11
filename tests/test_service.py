@@ -81,6 +81,33 @@ def test_invoke_needs_the_right_token(client, monkeypatch):
     assert client.post(url, json={"input": {}}, headers=auth("wrong")).status_code == 401
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        "invalid json",
+        "[]",
+        '{"team-a":3}',
+        '{"team-a":""}',
+        '{"":"token"}',
+        '{"team-a":"shared","team-b":"shared"}',
+        '{"team-a":"secret"}',
+    ],
+)
+def test_invalid_tenant_credentials_cannot_select_a_company(client, monkeypatch, settings):
+    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+    monkeypatch.setenv("AGENTS_TENANT_TOKENS", settings)
+    response = client.get("/api/decisions", headers=auth("shared"))
+    assert response.status_code == 503
+    assert "invalid AGENTS_TENANT_TOKENS" in response.json()["detail"]
+
+
+def test_tenant_only_setup_requires_a_matching_token(client, monkeypatch):
+    monkeypatch.setenv("AGENTS_TENANT_TOKENS", '{"team-a":"token-a"}')
+    assert client.get("/api/decisions", headers=auth("wrong")).status_code == 401
+    assert client.get("/api/decisions").status_code == 401
+    assert client.get("/api/decisions", headers=auth("token-a")).status_code == 200
+
+
 def test_invoke_refuses_an_agent_that_is_not_running(client, monkeypatch):
     monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
     r = client.post("/api/agents/expense-coder/invoke", json={"input": {}}, headers=auth())

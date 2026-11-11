@@ -70,17 +70,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          candidate_dir="$RUNNER_TEMP/exam-reuse-current"
-          if ! gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name exam-reports --dir "$candidate_dir"; then
+          restore_reports() {
+            candidate_dir="$RUNNER_TEMP/exam-reuse-$1"
+            source_repository=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1" \
+              --jq '.head_repository.full_name')
+            [ "$source_repository" = "$GITHUB_REPOSITORY" ] || return 1
+            gh run download "$1" --repo "$GITHUB_REPOSITORY" \
+              --name exam-reports --dir "$candidate_dir"
+          }
+          if ! restore_reports "$GITHUB_RUN_ID"; then
             exam_branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
             previous_run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
               --branch "$exam_branch" --status completed --limit 1 --json databaseId \
               --jq '.[0].databaseId // empty')
-            candidate_dir="$RUNNER_TEMP/exam-reuse-previous"
-            if [ -n "$previous_run" ]; then
-              gh run download "$previous_run" --repo "$GITHUB_REPOSITORY" \
-                --name exam-reports --dir "$candidate_dir" || true
+            if [ -z "$previous_run" ] || ! restore_reports "$previous_run"; then
+              while read -r run_id source_sha; do
+                if git merge-base --is-ancestor "$source_sha" HEAD 2>/dev/null \
+                  && restore_reports "$run_id"; then
+                  break
+                fi
+              done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+                --status completed --limit 20 --json databaseId,headSha \
+                --jq '.[] | [.databaseId,.headSha] | @tsv')
             fi
           fi
           for report in "$candidate_dir"/*.json; do

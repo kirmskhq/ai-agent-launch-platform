@@ -155,6 +155,10 @@ def derive_status(
         return "no_exam", ["no acceptance exam yet"]
     if report.case_set != "holdout":
         return "not_accepted", ["the report is from dev cases, not the holdout"]
+    if report.agent != passport.name:
+        return "not_accepted", ["the report names another agent"]
+    if passport.model not in models_config().models:
+        return "not_accepted", ["the passport model is no longer configured"]
     if report.measured_on != "real" or models_config().is_mock(passport.model):
         return "not_accepted", ["measured on the mock model, not a real one"]
     if report.model != passport.model:

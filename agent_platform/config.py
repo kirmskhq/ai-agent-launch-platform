@@ -73,6 +73,17 @@ class Provider(_Strict):
     api_key_env: str | None = None
     max_concurrency: int = Field(default=4, ge=1, description="Requests in flight at once")
     retries: int = Field(default=4, ge=0, description="Retries on rate limits and outages")
+    max_backoff_s: float = Field(
+        default=20, gt=0, description="Longest wait between retries; the wait doubles up to it"
+    )
+    max_wait_s: float = Field(
+        default=300,
+        gt=0,
+        description="Longest Retry-After the gateway waits out; a longer one fails at once",
+    )
+    requests_per_minute: int | None = Field(
+        default=None, ge=1, description="Space requests out to stay under the provider's limit"
+    )
     timeout_s: float = Field(default=60, gt=0)
 
     @model_validator(mode="after")

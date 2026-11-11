@@ -131,6 +131,36 @@ def test_five_outcomes_are_reported_separately(passport):
     assert any(reason.startswith("exam incomplete") for reason in r.reasons)
 
 
+def test_runs_that_never_reached_the_model_are_tried_again(passport):
+    r = run(passport, {"c": [ModelUnavailable("paused"), ANSWER, ANSWER, ANSWER]}, {"c": ANSWER})
+    assert r.cases[0].outcome == "answered_correct"
+    assert r.counts["infra_failure"] == 0
+
+
+def test_rerun_stops_when_the_provider_stays_down(passport):
+    down = ModelUnavailable("quota used up")
+    script = {"a": [down], "b": [down], "c": [down]}
+    calls = []
+
+    class Counting(ScriptedGraph):
+        def invoke(self, state):
+            calls.append(state["key"])
+            return super().invoke(state)
+
+    cases = [{"id": k, "input": {"key": k}, "expected": ANSWER} for k in script]
+    r = examine(
+        passport,
+        Counting(script),
+        cases,
+        case_set="holdout",
+        model="mock",
+        runs_per_case=1,
+        agent_fingerprint="x",
+    )
+    assert r.counts["infra_failure"] == 3
+    assert len(calls) == 4  # three runs, then one rerun that also failed
+
+
 def test_agent_crash_is_a_wrong_answer(passport):
     r = run(passport, {"c": [ValueError("bad input")]}, {"c": ANSWER}, runs=1)
     assert r.cases[0].outcome == "answered_wrong"

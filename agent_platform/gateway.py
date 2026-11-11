@@ -89,6 +89,7 @@ _mock_model: ContextVar[MockModel | None] = ContextVar("mock_model", default=Non
 
 _clients: dict[str, OpenAI] = {}
 _slots: dict[str, threading.BoundedSemaphore] = {}
+_next_start: dict[str, float] = {}
 _lock = threading.Lock()
 _sleep = time.sleep  # replaced in tests
 
@@ -256,8 +257,35 @@ def has_key(provider: Provider) -> bool:
     return bool(os.environ.get(provider.api_key_env or ""))
 
 
-def _backoff(attempt: int) -> float:
-    return min(2**attempt, 20) * (0.5 + random.random() / 2)
+def _backoff(attempt: int, ceiling: float) -> float:
+    return min(2**attempt, ceiling) * (0.5 + random.random() / 2)
+
+
+def _retry_after(error: Exception) -> float | None:
+    """The provider's own Retry-After, in seconds, if it sent one."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    for name, scale in (("retry-after-ms", 1000), ("retry-after", 1)):
+        value = headers.get(name)
+        if value is not None:
+            try:
+                return float(value) / scale
+            except ValueError:
+                return None
+    return None
+
+
+def _pace(provider_name: str, per_minute: int | None) -> None:
+    """Wait for this provider's next free slot in its per-minute budget."""
+    if not per_minute:
+        return
+    gap = 60 / per_minute
+    with _lock:
+        now = time.monotonic()
+        start = max(now, _next_start.get(provider_name, now))
+        _next_start[provider_name] = start + gap
+    if start > now:
+        _sleep(start - now)
 
 
 def _remote_reply(
@@ -283,11 +311,21 @@ def _remote_reply(
     for attempt in range(attempts):
         try:
             with _slot(spec.provider, provider.max_concurrency):
+                _pace(spec.provider, provider.requests_per_minute)
                 response = client.chat.completions.create(**request)
         except TRANSIENT_ERRORS as e:
             last = e
+            asked = _retry_after(e)
+            if asked is not None and asked > provider.max_wait_s:
+                # A quota window that resets in hours: waiting is pointless, and retrying
+                # early only gets the account paused.
+                raise ModelUnavailable(
+                    f"{alias}: the provider asks to wait {asked:.0f}s, longer than the "
+                    f"{provider.max_wait_s:.0f}s allowed: {e}"
+                ) from e
             if attempt + 1 < attempts:
-                _sleep(_backoff(attempt))
+                # Never earlier than the provider asks for.
+                _sleep(max(asked or 0.0, _backoff(attempt, provider.max_backoff_s)))
             continue
         except openai.APIError as e:
             raise GatewayError(f"{alias}: {type(e).__name__}: {e}") from e

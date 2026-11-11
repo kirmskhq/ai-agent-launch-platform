@@ -20,9 +20,15 @@ providers:
   neuraldeep:
     base_url: https://api.neuraldeep.tech/v1
     api_key_env: NEURALDEEP_API_KEY
-    # The free tier allows 3 requests at once; more come back as 429.
+    # Free tier (neuraldeep.tech/api/public/tier-limits): 3 requests at once, 20 a minute,
+    # answers within 900 s. A 429 carries Retry-After, and retrying before it pauses the
+    # account, so the gateway waits it out; 3-hour and weekly windows fail at once.
     max_concurrency: 3
-    retries: 6
+    requests_per_minute: 20
+    retries: 8
+    max_backoff_s: 60
+    max_wait_s: 300
+    timeout_s: 300
   mock:
     # A stand-in for tests and runs without a key. Never leaves the machine, costs nothing,
     # and an exam on it never makes an agent accepted.

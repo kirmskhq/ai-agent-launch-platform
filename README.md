@@ -159,7 +159,8 @@ then atomically installs the report. Reports are excluded from Git. Protect that
 as deployment authority. Reports are trusted local artifacts without cryptographic signatures.
 
 The fingerprint covers agent code, holdout cases, exam settings, baseline, model and provider
-configuration, tool policy and relevant runtime code. Changes require another exam. Readiness
+configuration, tool policy and relevant runtime code. Changes require another exam. Restart
+the service after pulling code so its imported platform modules match the deployed files. Readiness
 is checked again when deriving status. Draft and retired agents stay disabled.
 
 To route through LiteLLM, generate its configuration and run a LiteLLM proxy using the generated

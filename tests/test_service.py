@@ -25,6 +25,25 @@ def auth(token="secret"):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_staff_reviews_and_value_are_scoped_to_the_token(client, monkeypatch, running_agent):
+    monkeypatch.setenv("AGENTS_TENANT_TOKENS", '{"team-a":"token-a","team-b":"token-b"}')
+    response = client.post(
+        f"/api/agents/{running_agent}/invoke",
+        headers=auth("token-a"),
+        json={"input": {"description": "Flight to Lisbon", "amount": 240}},
+    )
+    assert response.status_code == 200
+    decision = response.json()["decision_id"]
+    assert client.get("/api/decisions", headers=auth("token-b")).json() == []
+    path = f"/api/decisions/{decision}/review"
+    body = {"correct": True, "staff": "Dana"}
+    assert client.post(path, headers=auth("token-b"), json=body).status_code == 404
+    assert client.post(path, headers=auth("token-a"), json=body).status_code == 200
+    value = client.get(f"/api/agents/{running_agent}/value", headers=auth("token-a")).json()
+    assert value["reviewed"] == 1
+    assert value["staff_saving"] == 2
+
+
 def test_catalogue_pages(client):
     page = client.get("/")
     assert page.status_code == 200

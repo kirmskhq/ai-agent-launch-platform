@@ -30,19 +30,18 @@ class Graph(Protocol):
 
 
 def _package(agent_dir: Path) -> str:
-    """Make the agent folder an importable package, so its files can import each other
-    (`from .policy import ...`). Points the package at this exact folder every time and drops
-    modules loaded from another folder of the same name."""
+    """Give each folder and code version an independent namespace for relative imports."""
     if "agent_code" not in sys.modules:
         root = ModuleType("agent_code")
         root.__path__ = []
         sys.modules["agent_code"] = root
-    name = f"agent_code.{agent_dir.name.replace('-', '_')}"
     folder = str(agent_dir.resolve())
-    package = sys.modules.get(name)
-    if package is None or list(package.__path__) != [folder]:
-        for loaded in [m for m in sys.modules if m.startswith(name + ".")]:
-            del sys.modules[loaded]
+    version = hashlib.sha256(folder.encode())
+    for source in sorted(agent_dir.rglob("*.py")):
+        version.update(source.relative_to(agent_dir).as_posix().encode())
+        version.update(source.read_bytes())
+    name = f"agent_code.{agent_dir.name.replace('-', '_')}_{version.hexdigest()[:16]}"
+    if name not in sys.modules:
         package = ModuleType(name)
         package.__path__ = [folder]
         sys.modules[name] = package
@@ -130,6 +129,14 @@ def fingerprint(agent_dir: Path, passport: Passport) -> str:
     h.update(platform_config().model_dump_json().encode())
     h.update(tools_config().model_dump_json().encode())
     for relative in (
+        "agent_platform/loader.py",
+        "agent_platform/exam.py",
+        "agent_platform/stats.py",
+        "agent_platform/config.py",
+        "agent_platform/passport.py",
+        "agent_platform/readiness.py",
+        "agent_platform/cases.py",
+        "agent_platform/economics.py",
         "agent_platform/gateway.py",
         "agent_platform/tools.py",
         "agent_platform/runner.py",

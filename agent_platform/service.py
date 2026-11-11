@@ -62,11 +62,11 @@ def require_token(
 
 class ReviewRequest(BaseModel):
     correct: bool
-    staff: str = Field(min_length=1)
+    staff: str = Field(min_length=1, pattern=r"\S")
 
 
 class ApprovalRequest(BaseModel):
-    staff: str = Field(min_length=1)
+    staff: str = Field(min_length=1, pattern=r"\S")
     reject: bool = False
 
 
@@ -200,6 +200,8 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
             review(decision_id, body.correct, body.staff, tenant)
         except LookupError as error:
             raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
         return {"ok": True}
 
     @app.post("/api/decisions/{decision_id}/approval")

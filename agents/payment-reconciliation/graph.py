@@ -32,7 +32,7 @@ SYSTEM = """You help the finance team of a payments company match incoming bank 
 open invoices. You get one bank statement line and the payer's open invoices.
 
 Decide which open invoices this payment settles in full. Payers write references in many \
-ways: "inv 1043", "Facture 1043", "1043/1044", "invoices 1043 and 1044 less fee". A bank \
+ways: "inv 1043", "invoice 1043", "1043/1044", "invoices 1043 and 1044 less fee". A bank \
 fee of up to 25 may be deducted from the amount.
 
 Rules:

@@ -57,6 +57,26 @@ def test_running_after_a_passed_exam_on_the_passport_model(workspace, real_model
     assert r.runs
 
 
+def test_provider_change_requires_another_exam(workspace, real_model):
+    agent = make_agent(workspace, "expense-real", model="test-real")
+    accept(agent)
+    config = workspace / "config" / "models.yaml"
+    config.write_text(config.read_text().replace("vendor/test-real-1", "vendor/test-real-2"))
+    assert record(agent).status == "not_accepted"
+
+
+def test_report_installer_rejects_mock_and_accepts_real(workspace, real_model):
+    from agent_platform.cli import main
+
+    agent = make_agent(workspace, "expense-real", model="test-real")
+    path = workspace / "candidate.json"
+    save_report(run_exam(agent, model="mock"), path)
+    assert main(["accept-report", str(path)]) == 1
+    save_report(run_exam(agent), path)
+    assert main(["accept-report", str(path)]) == 0
+    assert record(agent).runs
+
+
 def test_exam_on_another_model_is_not_accepted(workspace, real_model):
     agent = make_agent(workspace, "expense-real", model="test-real")
     accept(agent, model="test-other")

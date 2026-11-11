@@ -19,6 +19,7 @@ provider keys; the agent host then only needs the proxy address and AGENTS_GATEW
 """
 
 import json
+import logging
 import os
 import random
 import re
@@ -52,6 +53,10 @@ class ModelUnavailable(GatewayError):
     """The provider kept failing after every retry."""
 
 
+class DailyQuotaExceeded(ModelUnavailable):
+    """The provider's daily budget is exhausted. Another exam needs fresh capacity."""
+
+
 class BadModelReply(ValueError):
     """The model answered, but not in the form the agent asked for."""
 
@@ -81,6 +86,19 @@ class Ledger:
     @property
     def failed_calls(self) -> int:
         return sum(c.error is not None for c in self.calls)
+
+
+_exam_quota: ContextVar[dict[str, str] | None] = ContextVar("exam_quota", default=None)
+_log = logging.getLogger(__name__)
+
+
+@contextmanager
+def exam_quota_guard():
+    token = _exam_quota.set({})
+    try:
+        yield
+    finally:
+        _exam_quota.reset(token)
 
 
 _current_model: ContextVar[str | None] = ContextVar("current_model", default=None)
@@ -296,6 +314,9 @@ def _remote_reply(
     temperature: float,
     max_tokens: int | None,
 ) -> tuple[str, int, int]:
+    quota = _exam_quota.get()
+    if quota is not None and alias in quota:
+        raise DailyQuotaExceeded(quota[alias])
     client, via_proxy = _client(spec.provider, provider)
     # The proxy knows models by their platform alias; providers know them by their own id.
     request = {
@@ -313,11 +334,21 @@ def _remote_reply(
     for attempt in range(attempts):
         try:
             with _slot(spec.provider, provider.max_concurrency):
+                if quota is not None and alias in quota:
+                    raise DailyQuotaExceeded(quota[alias])
                 _pace(spec.provider, provider.requests_per_minute)
                 response = client.chat.completions.create(**request)
         except TRANSIENT_ERRORS as e:
             last = e
             asked = _retry_after(e)
+            _log.warning("%s attempt %s/%s failed: %s", alias, attempt + 1, attempts, e)
+            if isinstance(e, openai.RateLimitError) and re.search(
+                r"\b(tpd|rpd)\b|tokens per day|requests per day", str(e), re.IGNORECASE
+            ):
+                message = f"{alias}: daily quota exhausted: {e}"
+                if quota is not None:
+                    quota[alias] = message
+                raise DailyQuotaExceeded(message) from e
             if asked is not None and asked > provider.max_wait_s:
                 # A quota window that resets in hours: waiting is pointless, and retrying
                 # early only gets the account paused.

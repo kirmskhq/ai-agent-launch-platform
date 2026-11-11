@@ -61,6 +61,7 @@ def workspace(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr(gateway, "_sleep", lambda s: None)
     gateway._clients.clear()
     gateway._slots.clear()
+    gateway._next_start.clear()
     return tmp_path
 
 

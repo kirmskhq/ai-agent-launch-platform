@@ -30,19 +30,18 @@ class Graph(Protocol):
 
 
 def _package(agent_dir: Path) -> str:
-    """Make the agent folder an importable package, so its files can import each other
-    (`from .policy import ...`). Points the package at this exact folder every time and drops
-    modules loaded from another folder of the same name."""
+    """Give each folder and code version an independent namespace for relative imports."""
     if "agent_code" not in sys.modules:
         root = ModuleType("agent_code")
         root.__path__ = []
         sys.modules["agent_code"] = root
-    name = f"agent_code.{agent_dir.name.replace('-', '_')}"
     folder = str(agent_dir.resolve())
-    package = sys.modules.get(name)
-    if package is None or list(package.__path__) != [folder]:
-        for loaded in [m for m in sys.modules if m.startswith(name + ".")]:
-            del sys.modules[loaded]
+    version = hashlib.sha256(folder.encode())
+    for source in sorted(agent_dir.rglob("*.py")):
+        version.update(source.relative_to(agent_dir).as_posix().encode())
+        version.update(source.read_bytes())
+    name = f"agent_code.{agent_dir.name.replace('-', '_')}_{version.hexdigest()[:16]}"
+    if name not in sys.modules:
         package = ModuleType(name)
         package.__path__ = [folder]
         sys.modules[name] = package
@@ -80,6 +79,12 @@ def load_job(agent_dir: Path) -> Any | None:
     return _import(agent_dir, "job.py")
 
 
+def load_action(agent_dir: Path) -> Any | None:
+    if not (agent_dir / "action.py").is_file():
+        return None
+    return _import(agent_dir, "action.py").build_action
+
+
 def check_code(agent_dir: Path) -> list[str]:
     problems = []
     graph_file = agent_dir / "graph.py"
@@ -96,7 +101,9 @@ def check_code(agent_dir: Path) -> list[str]:
     return problems
 
 
-def fingerprint(agent_dir: Path, passport: Passport) -> str:
+def fingerprint(
+    agent_dir: Path, passport: Passport, *, runtime_sources: dict[str, bytes] | None = None
+) -> str:
     """A hash of everything that decides the exam result.
 
     The agent's code, its holdout cases and the passport fields the exam depends on. If any of
@@ -112,6 +119,39 @@ def fingerprint(agent_dir: Path, passport: Passport) -> str:
     holdout = cases_path(agent_dir, "holdout")
     if holdout.is_file():
         h.update(holdout.read_bytes().replace(b"\r\n", b"\n"))
-    exam_inputs = passport.model_dump(include={"model", "exam", "baseline", "error_cost"})
+    from agent_platform.config import models_config, platform_config
+    from agent_platform.settings import ROOT
+    from agent_platform.tools import tools_config
+
+    config = models_config()
+    model = config.models.get(passport.model)
+    if model:
+        h.update(model.model_dump_json().encode())
+        h.update(config.providers[model.provider].model_dump_json().encode())
+    h.update(platform_config().model_dump_json().encode())
+    h.update(tools_config().model_dump_json().encode())
+    for relative in (
+        "agent_platform/loader.py",
+        "agent_platform/exam.py",
+        "agent_platform/stats.py",
+        "agent_platform/config.py",
+        "agent_platform/passport.py",
+        "agent_platform/readiness.py",
+        "agent_platform/cases.py",
+        "agent_platform/economics.py",
+        "agent_platform/gateway.py",
+        "agent_platform/tools.py",
+        "agent_platform/runner.py",
+        "agent_platform/production.py",
+        "sandbox/tools.py",
+        "sandbox/store.py",
+    ):
+        source = (runtime_sources or {}).get(relative)
+        if source is None:
+            source = (ROOT / relative).read_bytes()
+        h.update(source.replace(b"\r\n", b"\n"))
+    exam_inputs = passport.model_dump(
+        include={"model", "exam", "baseline", "error_cost", "autonomy", "tools"}
+    )
     h.update(json.dumps(exam_inputs, sort_keys=True).encode())
     return h.hexdigest()[:16]

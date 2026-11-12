@@ -256,6 +256,10 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         print(f"FAIL {e}")
         return 1
     print(json.dumps(result.output, indent=2))
+    if result.action_state:
+        print(f"-- action: {result.action_state}")
+        if result.action_result is not None:
+            print(json.dumps(result.action_result, indent=2))
     fallback = ", fell back to a person" if result.fell_back else ""
     print(f"-- {result.model_calls} model calls, cost {result.cost:.6f}{fallback}")
     return 0

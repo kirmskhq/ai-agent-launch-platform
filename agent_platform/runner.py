@@ -35,6 +35,8 @@ class Result:
     model_calls: int
     latency_s: float
     decision_id: str = ""
+    action_state: str | None = None
+    action_result: Any = None
 
 
 def now_utc() -> str:
@@ -103,7 +105,19 @@ def _invoke(name: str, payload: dict, *, tenant: str) -> Result:
     decision = next(d for d in decisions(tenant, name) if d["id"] == decision_id)
     if decision["state"] == "ready":
         execute(decision_id, tenant)
-    return Result(output, fell_back, ledger.cost, len(ledger.calls), latency, decision_id)
+        decision = next(d for d in decisions(tenant, name) if d["id"] == decision_id)
+    action_state = decision["state"] if decision["action"] else None
+    fell_back = fell_back or action_state in ("failed", "unknown")
+    return Result(
+        output=output,
+        fell_back=fell_back,
+        cost=ledger.cost,
+        model_calls=len(ledger.calls),
+        latency_s=latency,
+        decision_id=decision_id,
+        action_state=action_state,
+        action_result=decision["action_result"],
+    )
 
 
 def _runs_file(name: str) -> Path:
@@ -135,6 +149,7 @@ def run_job(name: str, *, trigger: str = "manual", tenant: str = "default") -> d
     entry: dict[str, Any] = {"started_at": now_utc(), "trigger": trigger}
     started = time.perf_counter()
     answered = handed_over = fell_back = 0
+    action_counts: dict[str, int] = {}
     cost = 0.0
     token = TENANT.set(tenant)
     try:
@@ -147,7 +162,10 @@ def run_job(name: str, *, trigger: str = "manual", tenant: str = "default") -> d
         output, failed = result.output, result.fell_back
         cost += result.cost
         fell_back += failed
-        if is_handover(output):
+        if result.action_state:
+            state = result.action_state
+            action_counts[state] = action_counts.get(state, 0) + 1
+        if is_handover(output) or failed:
             handed_over += 1
         else:
             answered += 1
@@ -158,6 +176,7 @@ def run_job(name: str, *, trigger: str = "manual", tenant: str = "default") -> d
         answered=answered,
         handed_over=handed_over,
         fell_back=fell_back,
+        action_counts=action_counts,
         cost=round(cost, 6),
         model=agent.passport.model,
     )

@@ -121,6 +121,8 @@ def test_invoke_a_running_agent(client, monkeypatch, running_agent):
     r = client.post(f"/api/agents/{running_agent}/invoke", json=body, headers=auth())
     assert r.status_code == 200, r.text
     assert r.json()["output"] == {"category": "travel"}
+    assert r.json()["action_state"] is None
+    assert r.json()["action_result"] is None
     assert r.json()["fell_back_to_person"] is False
 
 
@@ -147,3 +149,92 @@ def test_run_a_scheduled_job_now(client, monkeypatch, running_agent):
 def test_unknown_agent_is_404_even_with_a_token(client, monkeypatch):
     monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
     assert client.post("/api/agents/nobody/run", headers=auth()).status_code == 404
+
+
+@pytest.fixture
+def action_agent(workspace, real_model):
+    def create(autonomy="act_alone"):
+        agent = make_agent(
+            workspace,
+            "expense-action",
+            model="test-real",
+            autonomy=autonomy,
+            tools=["issue_refund"],
+        )
+        (agent / "action.py").write_text(
+            "def build_action(payload, output):\n"
+            "    if output.get('category') != 'travel':\n"
+            "        return None\n"
+            "    return {'tool': 'issue_refund', 'arguments': "
+            "{'request_id': 'RR-9001', 'amount': 48}}\n"
+        )
+        report = run_exam(agent)
+        save_report(report, acceptance_report_path(report.agent))
+        return agent.name
+
+    return create
+
+
+@pytest.mark.parametrize("state", ["executed", "failed", "unknown", "pending", "duplicate"])
+def test_invoke_reports_persisted_action_outcome(client, monkeypatch, action_agent, state):
+    from agent_platform import tools
+
+    name = action_agent("act_after_approval" if state == "pending" else "act_alone")
+    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+    calls = []
+
+    def write(**arguments):
+        calls.append(arguments)
+        if state == "unknown":
+            raise TimeoutError("connection lost after sending write")
+        return {"error": "write refused"} if state == "failed" else {"ok": True}
+
+    monkeypatch.setattr(tools, "_function", lambda spec: write)
+    url = f"/api/agents/{name}/invoke"
+    body = {"input": {"description": "Flight to Lisbon", "amount": 240}}
+    if state == "duplicate":
+        assert client.post(url, headers=auth(), json=body).json()["action_state"] == "executed"
+    response = client.post(url, headers=auth(), json=body)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["output"] == {"category": "travel"}
+    assert result["action_state"] == state
+    assert result["fell_back_to_person"] is (state in ("failed", "unknown"))
+    persisted = next(
+        d
+        for d in client.get("/api/decisions", headers=auth()).json()
+        if d["id"] == result["decision_id"]
+    )
+    assert result["action_result"] == persisted["action_result"]
+    if state == "executed":
+        assert result["action_result"] == {"ok": True}
+    elif state in ("failed", "unknown"):
+        assert "error" in result["action_result"]
+    else:
+        assert result["action_result"] is None
+    assert len(calls) == (0 if state == "pending" else 1)
+
+
+@pytest.mark.parametrize("state", ["executed", "failed", "unknown"])
+def test_job_counts_action_outcomes(client, monkeypatch, action_agent, state):
+    from agent_platform import tools
+    from agent_platform.runner import recent_runs
+
+    name = action_agent()
+    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+
+    def write(**arguments):
+        if state == "unknown":
+            raise TimeoutError("outcome uncertain")
+        return {"error": "refused"} if state == "failed" else {"ok": True}
+
+    monkeypatch.setattr(tools, "_function", lambda spec: write)
+    response = client.post(f"/api/agents/{name}/run", headers=auth())
+    assert response.status_code == 200
+    result = response.json()
+    assert result["action_counts"] == {state: 1}
+    assert result["answered"] == (1 if state == "executed" else 0)
+    assert result["handed_over"] == (1 if state == "executed" else 2)
+    assert result["fell_back"] == (0 if state == "executed" else 1)
+    assert result["cases"] == 2
+    assert recent_runs(name)[0] == result

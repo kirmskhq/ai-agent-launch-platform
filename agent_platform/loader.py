@@ -106,8 +106,9 @@ def fingerprint(
 ) -> str:
     """A hash of everything that decides the exam result.
 
-    The agent's code, its holdout cases and the passport fields the exam depends on. If any of
-    them changes after the exam, the exam no longer describes the agent and has to be rerun.
+    The agent's code, holdout cases, runtime policy, dependency definitions and the
+    passport fields the exam depends on. If any of them changes after the exam, the exam
+    no longer describes the agent and has to be rerun.
     Schedule, title and lifecycle are left out: changing them does not change answers.
     """
     h = hashlib.sha256()
@@ -145,6 +146,9 @@ def fingerprint(
         "agent_platform/production.py",
         "sandbox/tools.py",
         "sandbox/store.py",
+        "sandbox/refund_policy.md",
+        "pyproject.toml",
+        "uv.lock",
     ):
         source = (runtime_sources or {}).get(relative)
         if source is None:

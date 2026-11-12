@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 
 from agent_platform.exam import acceptance_report_path, run_exam, save_report
@@ -131,3 +133,37 @@ def test_find_rejects_paths(workspace):
 def test_records_skip_hidden_and_template_folders(workspace):
     make_agent(workspace, "_template")
     assert [r.name for r in records()] == ["expense-coder"]
+
+
+@pytest.mark.parametrize("dependency", ["sandbox/refund_policy.md", "pyproject.toml", "uv.lock"])
+def test_runtime_dependency_change_invalidates_acceptance(
+    workspace, real_model, monkeypatch, dependency
+):
+    from agent_platform import settings
+
+    # Isolate shared runtime files so the test never edits the checkout.
+    runtime = workspace / "runtime"
+    for folder in ("agent_platform", "sandbox"):
+        shutil.copytree(settings.ROOT / folder, runtime / folder)
+    for name in ("pyproject.toml", "uv.lock"):
+        shutil.copy(settings.ROOT / name, runtime / name)
+    monkeypatch.setattr(settings, "ROOT", runtime)
+
+    agent = make_agent(workspace, "expense-real", model="test-real")
+    accept(agent)
+    assert record(agent).runs
+
+    path = runtime / dependency
+    original = path.read_bytes()
+    # Line-ending conversion alone must preserve cross-platform acceptance.
+    path.write_bytes(original.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    assert record(agent).runs
+
+    path.write_bytes(original + b"\n# Changed runtime dependency\n")
+    changed = record(agent)
+    assert changed.status == "not_accepted"
+    assert "changed after its exam" in changed.reasons[0]
+
+    # Restoring the exact dependency restores the original acceptance identity.
+    path.write_bytes(original)
+    assert record(agent).runs

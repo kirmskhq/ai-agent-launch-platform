@@ -257,6 +257,19 @@ answers right or wrong and approve or reject queued actions. API calls use beare
 Set AGENTS_TENANT_TOKENS to a JSON object mapping tenant names to distinct tokens for multiple
 companies. Every token must be nonempty and distinct, including the default company token.
 Invalid or duplicate token settings disable authenticated operations with a configuration error.
+Invocation responses keep the agent's answer in `output` and report write outcomes separately:
+`action_state` is `null` when no action was proposed, or a decision state such as `pending`,
+`executed`, `failed`, `unknown`, or `duplicate`. `action_result` contains the tool result when
+available. An HTTP 200 means the invocation was processed; check `action_state` before treating
+an action as completed. `unknown` means the write may have happened and requires reconciliation;
+do not retry it blindly. Pending approvals and duplicate decisions have no new tool result.
+
+Failed and unknown writes set `fell_back_to_person` to true while preserving the original
+agent answer. This flag signals that staff attention is required; it does not dispatch a staff
+notification. The CLI also prints the action state and result. Job summaries include
+`action_counts` by state and count failed or unknown writes as handed over rather than answered.
+Pending actions remain answered decisions awaiting approval, not completed writes.
+
 The server derives the tenant from the token. Decisions, approvals and in-memory
 sandbox data follow that tenant. The default token and scheduler serve the default company.
 Catalogue metadata and default-company aggregate values are public.

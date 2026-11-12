@@ -185,7 +185,11 @@ wrong answers and handovers, and retries only infrastructure failures or unfinis
 The final Wilson bound and costs are recalculated from the combined evidence. Retry costs
 are added to the original run's costs.
 
-Agent code, model, settings, cases and run count must match. CI first restores a previous attempt of the same run, then falls back to the latest
+Agent code, model, settings, cases and run count must match. Acceptance fingerprints also
+include the sandbox refund policy, `pyproject.toml` and `uv.lock`; changing these requires a
+fresh exam. Reports created before these dependencies were fingerprinted require fresh exams too.
+
+CI first restores a previous attempt of the same run, then falls back to the latest
 completed branch artifact, and validates its reports before resuming. New branches can reuse
 reports from an ancestor commit in the same repository after the same fingerprint and
 evidence checks. Reports originating from another repository are excluded from automatic reuse. A complete failed quality exam keeps its

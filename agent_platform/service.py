@@ -192,6 +192,8 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
         return {
             "decision_id": result.decision_id,
             "output": result.output,
+            "action_state": result.action_state,
+            "action_result": result.action_result,
             "fell_back_to_person": result.fell_back,
             "cost": round(result.cost, 6),
             "model_calls": result.model_calls,

@@ -9,7 +9,7 @@ process is clear enough to automate, examines the agent on past cases, controls 
 do, and measures its value after launch.
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["Proposal<br/>process, volume, cost"] --> B{"Readiness<br/>clear enough<br/>to automate?"}
     B -- no --> A
     B -- yes --> C["Agent<br/>passport + code"]
@@ -73,7 +73,7 @@ uv run python -m sandbox.mcp_server
 ## Example agents and recorded acceptance
 
 ```mermaid
-flowchart LR
+flowchart TD
     P[Process and baseline] --> R{Readiness}
     R -->|Build| D[Agent and dev cases]
     D --> E{Holdout exam}

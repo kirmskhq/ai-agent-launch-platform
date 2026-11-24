@@ -56,7 +56,14 @@ def workspace(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("AGENTS_REPORTS_DIR", str(tmp_path / "reports"))
     monkeypatch.setenv("AGENTS_STATE_DIR", str(tmp_path / "var"))
     monkeypatch.setenv("AGENTS_CONFIG_DIR", str(config))
-    for var in ("AGENTS_GATEWAY_URL", "AGENTS_API_TOKEN", "TESTCLOUD_KEY", "AGENTS_SCHEDULER"):
+    for var in (
+        "AGENTS_GATEWAY_URL",
+        "AGENTS_API_TOKEN",
+        "AGENTS_TENANT_TOKENS",
+        "AGENTS_STAFF_TOKENS",
+        "TESTCLOUD_KEY",
+        "AGENTS_SCHEDULER",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(gateway, "_sleep", lambda s: None)
     gateway._clients.clear()

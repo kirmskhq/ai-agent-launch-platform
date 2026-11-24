@@ -11,8 +11,8 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere} #message {color: #8b3525}
 <a href="/">Catalogue</a>
 <h1>Review decisions and approve actions</h1>
 <label>Bearer token <input id="token" type="password" autocomplete="off"></label>
-<label>Staff name <input id="staff" autocomplete="name"></label>
 <button id="load">Load decisions</button>
+<p id="who"></p>
 <p id="message" role="status"></p>
 <main id="decisions"></main>
 <script>
@@ -30,6 +30,9 @@ async function request(path, body) {
 }
 async function load() {
   try {
+    const me = await request('/api/me');
+    document.querySelector('#who').textContent = (me.name || 'Service token') + ' · ' + me.role +
+      ' · ' + me.tenant + (me.may.includes('review') ? '' : ' · reviews need a personal staff token');
     const rows = await request('/api/decisions');
     const root = document.querySelector('#decisions');
     root.replaceChildren();
@@ -40,18 +43,19 @@ async function load() {
       article.append(heading);
       const content = document.createElement('pre');
       content.textContent = JSON.stringify({created_at: row.created_at, input: row.payload,
-        answer: row.output, action: row.action, result: row.action_result}, null, 2);
+        answer: row.output, action: row.action, result: row.action_result,
+        reviewed: row.reviewed === null ? null : Boolean(row.reviewed), by: row.reviewer}, null, 2);
       article.append(content);
-      const actions = [['Right', 'review', {correct: true}], ['Wrong', 'review', {correct: false}]];
-      if (row.state === 'pending') actions.push(['Approve', 'approval', {reject: false}], ['Reject', 'approval', {reject: true}]);
+      const actions = [];
+      if (me.may.includes('review')) actions.push(['Right', 'review', {correct: true}], ['Wrong', 'review', {correct: false}]);
+      if (row.state === 'pending' && me.may.includes('approve')) actions.push(['Approve', 'approval', {reject: false}], ['Reject', 'approval', {reject: true}]);
       for (const [label, endpoint, body] of actions) {
         const button = document.createElement('button');
         button.textContent = label;
         button.onclick = async () => {
           button.disabled = true;
           try {
-            await request('/api/decisions/' + row.id + '/' + endpoint,
-              {...body, staff: document.querySelector('#staff').value});
+            await request('/api/decisions/' + row.id + '/' + endpoint, body);
             await load();
           } catch (error) {message.textContent = error.message; button.disabled = false;}
         };

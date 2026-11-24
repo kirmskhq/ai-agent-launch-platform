@@ -241,22 +241,38 @@ uv run agents litellm-config --check
 
 ## Production decisions, reviews and value
 
-Set AGENTS_API_TOKEN in `.env`, start the service and open `/operations`. Enter the token and
-a staff name. The page shows inputs, answers, pending approvals and action results. Mark
-answers right or wrong and approve or reject queued actions. API calls use bearer authentication.
+Systems and people get different tokens. AGENTS_API_TOKEN is a service token: it runs agents
+and reads decisions. Each person who reviews answers or approves actions gets a personal token
+in AGENTS_STAFF_TOKENS, with the role `reviewer` or `approver`.
 
-| Endpoint | Purpose |
-| --- | --- |
-| POST /api/agents/{name}/invoke | Run one input with body `{"input": {...}}` |
-| POST /api/agents/{name}/run | Collect pending work and run a batch |
-| GET /api/decisions | Read the current tenant's decisions and approval queue |
-| POST /api/decisions/{id}/review | Body `{"correct": true, "staff": "Dana"}` |
-| POST /api/decisions/{id}/approval | Body `{"staff": "Dana", "reject": false}` |
-| GET /api/agents/{name}/value?weeks=4 | Measured value and checkpoint recommendation |
+```sh
+AGENTS_API_TOKEN=replace-with-a-long-secret
+AGENTS_STAFF_TOKENS={"Dana": {"token": "another-long-secret", "role": "approver"}}
+```
 
-Set AGENTS_TENANT_TOKENS to a JSON object mapping tenant names to distinct tokens for multiple
-companies. Every token must be nonempty and distinct, including the default company token.
-Invalid or duplicate token settings disable authenticated operations with a configuration error.
+Start the service and open `/operations` with a staff token. The page shows who the token
+belongs to, inputs, answers, pending approvals and action results. Reviewers mark answers
+right or wrong. Approvers also approve or reject queued actions. A review or approval is
+recorded under the token owner's name, so a service token can do neither.
+
+| Endpoint | Token | Purpose |
+| --- | --- | --- |
+| POST /api/agents/{name}/invoke | service | Run one input with body `{"input": {...}}` |
+| POST /api/agents/{name}/run | service | Collect pending work and run a batch |
+| GET /api/decisions | any | Read the token's company's decisions and approval queue |
+| POST /api/decisions/{id}/review | reviewer, approver | Body `{"correct": true}` |
+| POST /api/decisions/{id}/approval | approver | Body `{"reject": false}` |
+| GET /api/agents/{name}/value?weeks=4 | any | Measured value and checkpoint recommendation |
+| GET /api/me | any | Name, company and role of the token |
+
+Set AGENTS_TENANT_TOKENS to a JSON object mapping tenant names to service tokens for multiple
+companies. A staff entry names its company with `"tenant": "team-a"`, otherwise it belongs to
+the default company. Every token must be nonempty and distinct across all three settings.
+The service checks token settings once at start and refuses to start when they are invalid.
+Restart it after changing a token. The server derives the company from the token. Decisions,
+approvals and in-memory sandbox data follow that company. The default token and scheduler
+serve the default company. Catalogue metadata and default-company aggregate values are public.
+
 Invocation responses keep the agent's answer in `output` and report write outcomes separately:
 `action_state` is `null` when no action was proposed, or a decision state such as `pending`,
 `executed`, `failed`, `unknown`, or `duplicate`. `action_result` contains the tool result when
@@ -269,10 +285,6 @@ agent answer. This flag signals that staff attention is required; it does not di
 notification. The CLI also prints the action state and result. Job summaries include
 `action_counts` by state and count failed or unknown writes as handed over rather than answered.
 Pending actions remain answered decisions awaiting approval, not completed writes.
-
-The server derives the tenant from the token. Decisions, approvals and in-memory
-sandbox data follow that tenant. The default token and scheduler serve the default company.
-Catalogue metadata and default-company aggregate values are public.
 
 SQLite records invocations before they begin and updates their outcomes in `var/decisions.sqlite3`. An action is claimed durably
 before its tool runs. An interrupted model call remains in progress for staff inspection. Interrupted actions retain an unknown outcome for staff reconciliation.
@@ -307,8 +319,9 @@ Use one service worker when scheduling. Scheduled runs cannot overlap within tha
 - The lower bound accounts for small samples. Repeated runs expose inconsistent behaviour.
 - One graph per agent keeps paths inspectable. Multi-agent debate, model-driven policy decisions,
   weighted readiness scores and autonomous handling of ambiguous cases were rejected.
-- Bearer tokens fit a small deployment. An identity provider and staff roles are needed for
-  shared production use with individual accountability. Use HTTPS at the ingress for remote access.
+- Personal bearer tokens with two staff roles fit a small deployment and tie each review and
+  approval to a named person. Larger organisations need an identity provider, token rotation
+  and revocation without a restart. Use HTTPS at the ingress for remote access.
 
 ## Limitations
 
@@ -333,7 +346,7 @@ Use one service worker when scheduling. Scheduled runs cannot overlap within tha
 | Proposal and financial case | [readiness.py](agent_platform/readiness.py), [economics.py](agent_platform/economics.py) |
 | Model access and tool permissions | [gateway.py](agent_platform/gateway.py), [tools.py](agent_platform/tools.py) |
 | Acceptance and resumable exams | [exam.py](agent_platform/exam.py), [registry.py](agent_platform/registry.py) |
-| Decisions, approvals and measured value | [production.py](agent_platform/production.py), [service.py](agent_platform/service.py) |
+| Decisions, approvals and measured value | [production.py](agent_platform/production.py), [service.py](agent_platform/service.py), [auth.py](agent_platform/auth.py) |
 | Example implementations | [agents](agents), [sandbox](sandbox) |
 
 ## Development

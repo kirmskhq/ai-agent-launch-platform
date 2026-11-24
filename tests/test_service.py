@@ -1,16 +1,52 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_platform.auth import CredentialsError
 from agent_platform.exam import acceptance_report_path, run_exam, save_report
+from agent_platform.production import decisions
 from agent_platform.service import create_app
 
 from .conftest import make_agent
 
+STAFF = {
+    "Dana": {"token": "dana-token", "role": "approver"},
+    "Lee": {"token": "lee-token", "role": "reviewer"},
+    "Sam": {"token": "sam-token", "role": "reviewer", "tenant": "team-b"},
+}
+
 
 @pytest.fixture
-def client():
-    with TestClient(create_app(scheduler=False)) as c:
-        yield c
+def connect(monkeypatch):
+    """Start the service after setting its environment, as a deployment would."""
+    clients = []
+
+    def open_client(**env: str) -> TestClient:
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        client = TestClient(create_app(scheduler=False))
+        client.__enter__()
+        clients.append(client)
+        return client
+
+    yield open_client
+    for client in clients:
+        client.__exit__(None, None, None)
+
+
+@pytest.fixture
+def client(connect):
+    return connect()
+
+
+@pytest.fixture
+def staffed(connect):
+    return connect(
+        AGENTS_API_TOKEN="secret",
+        AGENTS_TENANT_TOKENS='{"team-a":"token-a","team-b":"token-b"}',
+        AGENTS_STAFF_TOKENS=json.dumps(STAFF),
+    )
 
 
 @pytest.fixture
@@ -25,23 +61,70 @@ def auth(token="secret"):
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_staff_reviews_and_value_are_scoped_to_the_token(client, monkeypatch, running_agent):
-    monkeypatch.setenv("AGENTS_TENANT_TOKENS", '{"team-a":"token-a","team-b":"token-b"}')
+def invoke(client, agent, token="secret"):
     response = client.post(
-        f"/api/agents/{running_agent}/invoke",
-        headers=auth("token-a"),
+        f"/api/agents/{agent}/invoke",
+        headers=auth(token),
         json={"input": {"description": "Flight to Lisbon", "amount": 240}},
     )
-    assert response.status_code == 200
-    decision = response.json()["decision_id"]
-    assert client.get("/api/decisions", headers=auth("token-b")).json() == []
+    assert response.status_code == 200, response.text
+    return response.json()["decision_id"]
+
+
+def test_staff_reviews_and_value_are_scoped_to_the_token(staffed, running_agent):
+    decision = invoke(staffed, running_agent, "token-a")
+    assert staffed.get("/api/decisions", headers=auth("token-b")).json() == []
     path = f"/api/decisions/{decision}/review"
-    body = {"correct": True, "staff": "Dana"}
-    assert client.post(path, headers=auth("token-b"), json=body).status_code == 404
-    assert client.post(path, headers=auth("token-a"), json=body).status_code == 200
-    value = client.get(f"/api/agents/{running_agent}/value", headers=auth("token-a")).json()
+    assert staffed.post(path, headers=auth("sam-token"), json={"correct": True}).status_code == 404
+    assert staffed.post(path, headers=auth("lee-token"), json={"correct": True}).status_code == 404
+    value = staffed.get(f"/api/agents/{running_agent}/value", headers=auth("token-a")).json()
+    assert value["reviewed"] == 0
+
+
+def test_a_review_is_recorded_under_the_token_owner(staffed, running_agent):
+    decision = invoke(staffed, running_agent)
+    response = staffed.post(
+        f"/api/decisions/{decision}/review",
+        headers=auth("lee-token"),
+        json={"correct": True, "staff": "Somebody else"},
+    )
+    assert response.status_code == 200
+    assert response.json()["reviewer"] == "Lee"
+    assert decisions()[0]["reviewer"] == "Lee"
+    value = staffed.get(f"/api/agents/{running_agent}/value", headers=auth("lee-token")).json()
     assert value["reviewed"] == 1
     assert value["staff_saving"] == 2
+
+
+def test_service_tokens_run_agents_but_cannot_review_or_approve(staffed, running_agent):
+    decision = invoke(staffed, running_agent)
+    review = staffed.post(
+        f"/api/decisions/{decision}/review", headers=auth(), json={"correct": True}
+    )
+    assert review.status_code == 403
+    approval = staffed.post(f"/api/decisions/{decision}/approval", headers=auth(), json={})
+    assert approval.status_code == 403
+    assert "approver" in approval.json()["detail"]
+
+
+def test_only_approvers_approve_and_staff_cannot_run_agents(staffed, running_agent):
+    decision = invoke(staffed, running_agent)
+    path = f"/api/decisions/{decision}/approval"
+    assert staffed.post(path, headers=auth("lee-token"), json={}).status_code == 403
+    assert staffed.post(path, headers=auth("dana-token"), json={}).status_code == 200
+    missing = staffed.post("/api/decisions/nope/approval", headers=auth("dana-token"), json={})
+    assert missing.status_code == 404
+    run = staffed.post(f"/api/agents/{running_agent}/run", headers=auth("dana-token"))
+    assert run.status_code == 403
+
+
+def test_me_names_the_token_owner(staffed):
+    me = staffed.get("/api/me", headers=auth("sam-token")).json()
+    assert me == {"name": "Sam", "tenant": "team-b", "role": "reviewer", "may": ["read", "review"]}
+    service = staffed.get("/api/me", headers=auth("token-a")).json()
+    assert service["name"] is None
+    assert service["may"] == ["run", "read"]
+    assert staffed.get("/api/me").status_code == 401
 
 
 def test_catalogue_pages(client):
@@ -74,49 +157,57 @@ def test_invoke_is_refused_without_a_configured_token(client):
     assert r.status_code == 503
 
 
-def test_invoke_needs_the_right_token(client, monkeypatch):
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+def test_invoke_needs_the_right_token(connect):
+    client = connect(AGENTS_API_TOKEN="secret")
     url = "/api/agents/expense-coder/invoke"
     assert client.post(url, json={"input": {}}).status_code == 401
     assert client.post(url, json={"input": {}}, headers=auth("wrong")).status_code == 401
 
 
 @pytest.mark.parametrize(
-    "settings",
+    ("name", "settings"),
     [
-        "invalid json",
-        "[]",
-        '{"team-a":3}',
-        '{"team-a":""}',
-        '{"":"token"}',
-        '{"team-a":"shared","team-b":"shared"}',
-        '{"team-a":"secret"}',
+        ("AGENTS_TENANT_TOKENS", "invalid json"),
+        ("AGENTS_TENANT_TOKENS", "[]"),
+        ("AGENTS_TENANT_TOKENS", '{"team-a":3}'),
+        ("AGENTS_TENANT_TOKENS", '{"team-a":""}'),
+        ("AGENTS_TENANT_TOKENS", '{"":"token"}'),
+        ("AGENTS_TENANT_TOKENS", '{"team-a":"shared","team-b":"shared"}'),
+        ("AGENTS_TENANT_TOKENS", '{"team-a":"secret"}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":"dana-token"}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"dana-token"}}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"dana-token","role":"admin"}}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"","role":"reviewer"}}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"secret","role":"reviewer"}}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"t","role":"reviewer","tenant":"team-z"}}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"t","role":"reviewer","tenant":["x"]}}'),
+        ("AGENTS_STAFF_TOKENS", '{"Dana":{"token":"t","role":"reviewer","email":"d@x"}}'),
+        ("AGENTS_STAFF_TOKENS", '{" ":{"token":"t","role":"reviewer"}}'),
     ],
 )
-def test_invalid_tenant_credentials_cannot_select_a_company(client, monkeypatch, settings):
+def test_invalid_token_settings_stop_the_service_from_starting(monkeypatch, name, settings):
     monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
-    monkeypatch.setenv("AGENTS_TENANT_TOKENS", settings)
-    response = client.get("/api/decisions", headers=auth("shared"))
-    assert response.status_code == 503
-    assert "invalid AGENTS_TENANT_TOKENS" in response.json()["detail"]
+    monkeypatch.setenv(name, settings)
+    with pytest.raises(CredentialsError, match=f"{name}|distinct"):
+        create_app(scheduler=False)
 
 
-def test_tenant_only_setup_requires_a_matching_token(client, monkeypatch):
-    monkeypatch.setenv("AGENTS_TENANT_TOKENS", '{"team-a":"token-a"}')
+def test_tenant_only_setup_requires_a_matching_token(connect):
+    client = connect(AGENTS_TENANT_TOKENS='{"team-a":"token-a"}')
     assert client.get("/api/decisions", headers=auth("wrong")).status_code == 401
     assert client.get("/api/decisions").status_code == 401
     assert client.get("/api/decisions", headers=auth("token-a")).status_code == 200
 
 
-def test_invoke_refuses_an_agent_that_is_not_running(client, monkeypatch):
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+def test_invoke_refuses_an_agent_that_is_not_running(connect):
+    client = connect(AGENTS_API_TOKEN="secret")
     r = client.post("/api/agents/expense-coder/invoke", json={"input": {}}, headers=auth())
     assert r.status_code == 409
     assert "no acceptance exam" in r.json()["detail"]
 
 
-def test_invoke_a_running_agent(client, monkeypatch, running_agent):
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+def test_invoke_a_running_agent(connect, running_agent):
+    client = connect(AGENTS_API_TOKEN="secret")
     body = {"input": {"description": "Flight to Lisbon", "amount": 240.0}}
     r = client.post(f"/api/agents/{running_agent}/invoke", json=body, headers=auth())
     assert r.status_code == 200, r.text
@@ -126,8 +217,8 @@ def test_invoke_a_running_agent(client, monkeypatch, running_agent):
     assert r.json()["fell_back_to_person"] is False
 
 
-def test_agent_failure_falls_back_to_a_person(client, monkeypatch, running_agent):
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+def test_agent_failure_falls_back_to_a_person(connect, running_agent):
+    client = connect(AGENTS_API_TOKEN="secret")
     r = client.post(
         f"/api/agents/{running_agent}/invoke", json={"input": {"amount": 5}}, headers=auth()
     )
@@ -136,8 +227,8 @@ def test_agent_failure_falls_back_to_a_person(client, monkeypatch, running_agent
     assert r.json()["fell_back_to_person"] is True
 
 
-def test_run_a_scheduled_job_now(client, monkeypatch, running_agent):
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+def test_run_a_scheduled_job_now(connect, running_agent):
+    client = connect(AGENTS_API_TOKEN="secret")
     r = client.post(f"/api/agents/{running_agent}/run", headers=auth())
     assert r.status_code == 200
     assert r.json()["cases"] == 2
@@ -146,8 +237,8 @@ def test_run_a_scheduled_job_now(client, monkeypatch, running_agent):
     assert "Recent scheduled runs" in page.text
 
 
-def test_unknown_agent_is_404_even_with_a_token(client, monkeypatch):
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+def test_unknown_agent_is_404_even_with_a_token(connect):
+    client = connect(AGENTS_API_TOKEN="secret")
     assert client.post("/api/agents/nobody/run", headers=auth()).status_code == 404
 
 
@@ -176,11 +267,11 @@ def action_agent(workspace, real_model):
 
 
 @pytest.mark.parametrize("state", ["executed", "failed", "unknown", "pending", "duplicate"])
-def test_invoke_reports_persisted_action_outcome(client, monkeypatch, action_agent, state):
+def test_invoke_reports_persisted_action_outcome(connect, monkeypatch, action_agent, state):
     from agent_platform import tools
 
     name = action_agent("act_after_approval" if state == "pending" else "act_alone")
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+    client = connect(AGENTS_API_TOKEN="secret")
     calls = []
 
     def write(**arguments):
@@ -216,12 +307,12 @@ def test_invoke_reports_persisted_action_outcome(client, monkeypatch, action_age
 
 
 @pytest.mark.parametrize("state", ["executed", "failed", "unknown"])
-def test_job_counts_action_outcomes(client, monkeypatch, action_agent, state):
+def test_job_counts_action_outcomes(connect, monkeypatch, action_agent, state):
     from agent_platform import tools
     from agent_platform.runner import recent_runs
 
     name = action_agent()
-    monkeypatch.setenv("AGENTS_API_TOKEN", "secret")
+    client = connect(AGENTS_API_TOKEN="secret")
 
     def write(**arguments):
         if state == "unknown":

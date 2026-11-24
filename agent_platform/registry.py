@@ -13,15 +13,24 @@ Status is derived, never typed in by hand:
 A folder with only a proposal.yaml is a proposal, not yet an agent; see `proposals()`.
 
 The acceptance report is reports/<agent>.json. CI writes it; the server only reads it.
+
+Deriving a status reads and hashes every file the exam depends on, so `record()` keeps the last
+result per folder while none of those files has changed. A file written in the last two
+seconds is never trusted to its timestamp: its record is derived again on the next call.
 """
 
 import re
+import stat
+import threading
+import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
 
+from agent_platform import settings
 from agent_platform.cases import check_case_sets
 from agent_platform.config import models_config
 from agent_platform.exam import ExamReport, acceptance_report_path, load_report, verdict
@@ -174,7 +183,69 @@ def derive_status(
     return "running", []
 
 
+_SETTLE_NS = 2_000_000_000  # longer than the timestamp resolution of common file systems
+_CACHE_LIMIT = 256
+_cache: dict[Path, tuple[tuple, AgentRecord]] = {}
+_cache_lock = threading.Lock()
+
+
+def _today() -> str:
+    return datetime.now(UTC).date().isoformat()
+
+
+def _signature(agent_dir: Path) -> tuple[tuple, int]:
+    """Size, timestamp and identity of every file a record depends on, and the newest timestamp.
+
+    That is the agent folder, every acceptance report, the platform config and the platform's
+    own code and dependency lock, plus today's date, since readiness checks sign-off dates
+    against it.
+    """
+    where = paths()
+    groups = [
+        agent_dir.rglob("*"),
+        where.reports.glob("*.json"),
+        where.config.glob("*"),
+        (settings.ROOT / "agent_platform").rglob("*.py"),
+        (settings.ROOT / "sandbox").rglob("*"),
+        (settings.ROOT / name for name in ("pyproject.toml", "uv.lock")),
+    ]
+    files, newest = [], 0
+    for group in groups:
+        for path in group:
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                st = path.stat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            files.append((str(path), st.st_size, st.st_mtime_ns, st.st_ino))
+            newest = max(newest, st.st_mtime_ns)
+    files.sort()
+    where_key = (str(where.agents), str(where.reports), str(where.config))
+    return (where_key, _today(), tuple(files)), newest
+
+
 def record(agent_dir: Path) -> AgentRecord:
+    """The agent's derived record, recomputed whenever a file it depends on changes."""
+    key = agent_dir.resolve()
+    started = time.time_ns()
+    signature, newest = _signature(agent_dir)
+    with _cache_lock:
+        cached = _cache.get(key)
+    if cached and cached[0] == signature:
+        return cached[1]
+    result = _derive(agent_dir)
+    if newest < started - _SETTLE_NS:
+        with _cache_lock:
+            if len(_cache) >= _CACHE_LIMIT:
+                _cache.clear()
+            _cache[key] = (signature, result)
+    return result
+
+
+def _derive(agent_dir: Path) -> AgentRecord:
     try:
         passport = load_passport(agent_dir)
     except PassportError as e:

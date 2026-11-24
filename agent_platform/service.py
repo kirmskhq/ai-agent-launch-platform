@@ -1,36 +1,43 @@
 """The agent service: catalogue pages, a JSON API, and the endpoints that run agents.
 
-    GET  /                           catalogue
-    GET  /agents/{name}              one agent
-    GET  /api/agents                 catalogue as JSON
-    GET  /api/agents/{name}          one agent as JSON
-    GET  /proposals/{name}           a proposal at the readiness checkpoint
-    GET  /api/proposals              proposals as JSON
-    POST /api/agents/{name}/invoke   one call: {"input": {...}}             bearer token
-    POST /api/agents/{name}/run      the agent's scheduled job, right now     bearer token
-    GET  /healthz                    liveness
+    GET  /                                catalogue
+    GET  /agents/{name}                   one agent
+    GET  /api/agents                      catalogue as JSON
+    GET  /api/agents/{name}               one agent as JSON
+    GET  /proposals/{name}                a proposal at the readiness checkpoint
+    GET  /api/proposals                   proposals as JSON
+    POST /api/agents/{name}/invoke        one call: {"input": {...}}          service token
+    POST /api/agents/{name}/run           the agent's scheduled job, now      service token
+    GET  /api/decisions                   the caller's company's decisions    any token
+    GET  /api/agents/{name}/value         measured value                      any token
+    POST /api/decisions/{id}/review       {"correct": true}                   reviewer
+    POST /api/decisions/{id}/approval     {"reject": false}                   approver
+    GET  /api/me                          who the token belongs to            any token
+    GET  /operations                      staff page for reviews and approvals
+    GET  /healthz                         liveness
 
-Reading is open; anything that runs an agent needs `Authorization: Bearer <AGENTS_API_TOKEN>`.
-If AGENTS_API_TOKEN is not set, those endpoints refuse every request rather than run open.
+Reading the catalogue is open; everything else needs `Authorization: Bearer <token>`. Tokens and
+roles are described in `agent_platform.auth`. With no token configured at all, those endpoints
+refuse every request rather than run open.
 
 The scheduler starts with the service when AGENTS_SCHEDULER=1.
 """
 
-import hmac
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+from agent_platform.auth import Credentials, Permission, Principal
 from agent_platform.catalogue import render_agent, render_index, render_proposal
+from agent_platform.production import decisions, execute, measured, review
 from agent_platform.readiness import as_dict as readiness_dict
 from agent_platform.registry import AgentRecord, find, find_proposal, proposals, records
 from agent_platform.runner import NotRunnable, invoke, run_job
@@ -40,49 +47,50 @@ from agent_platform.settings import load_dotenv
 log = logging.getLogger("agent_platform.service")
 _bearer = HTTPBearer(auto_error=False)
 
+REFUSALS: dict[Permission, str] = {
+    "run": "only a service token can run agents",
+    "read": "this token cannot read decisions",
+    "review": "reviews need a personal staff token (AGENTS_STAFF_TOKENS)",
+    "approve": "approvals need a personal staff token with the approver role",
+}
 
-def require_token(
+
+def caller(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> str:
-    expected = os.environ.get("AGENTS_API_TOKEN", "")
-    try:
-        tenants = json.loads(os.environ.get("AGENTS_TENANT_TOKENS", "{}"))
-        if not isinstance(tenants, dict) or any(
-            not isinstance(tenant, str)
-            or not tenant.strip()
-            or not isinstance(token, str)
-            or not token.strip()
-            for tenant, token in tenants.items()
-        ):
-            raise ValueError("tenant names and tokens must be nonempty strings")
-        tokens = list(tenants.values())
-        if len(tokens) != len(set(tokens)) or (expected and expected in tokens):
-            raise ValueError("each tenant and the default company need distinct tokens")
-    except (ValueError, TypeError) as error:
-        raise HTTPException(503, f"invalid AGENTS_TENANT_TOKENS: {error}") from error
-    if credentials:
-        for tenant, token in tenants.items():
-            if hmac.compare_digest(credentials.credentials.encode(), token.encode()):
-                return tenant
-    if not expected and not tenants:
-        raise HTTPException(503, "AGENTS_API_TOKEN is not set; running agents is disabled")
-    if (
-        not expected
-        or credentials is None
-        or not hmac.compare_digest(credentials.credentials.encode(), expected.encode())
-    ):
+) -> Principal:
+    known: Credentials = request.app.state.credentials
+    if not known.configured:
+        raise HTTPException(503, "no tokens are configured; authenticated endpoints are disabled")
+    principal = known.identify(credentials.credentials) if credentials else None
+    if principal is None:
         raise HTTPException(401, "missing or wrong bearer token")
+    return principal
 
-    return "default"
+
+def allowed(permission: Permission):
+    """A dependency that admits only callers whose role carries `permission`."""
+
+    def dependency(principal: Annotated[Principal, Depends(caller)]) -> Principal:
+        if not principal.can(permission):
+            raise HTTPException(403, REFUSALS[permission])
+        return principal
+
+    return dependency
+
+
+Caller = Annotated[Principal, Depends(caller)]
+Runner = Annotated[Principal, Depends(allowed("run"))]
+Reader = Annotated[Principal, Depends(allowed("read"))]
+Reviewer = Annotated[Principal, Depends(allowed("review"))]
+Approver = Annotated[Principal, Depends(allowed("approve"))]
 
 
 class ReviewRequest(BaseModel):
     correct: bool
-    staff: str = Field(min_length=1, pattern=r"\S")
 
 
 class ApprovalRequest(BaseModel):
-    staff: str = Field(min_length=1, pattern=r"\S")
     reject: bool = False
 
 
@@ -129,7 +137,9 @@ def _agent(name: str) -> AgentRecord:
 
 
 def create_app(*, scheduler: bool | None = None) -> FastAPI:
+    """The service. Raises CredentialsError when the token settings are invalid."""
     load_dotenv()
+    credentials = Credentials.from_env()
     start_scheduler = os.environ.get("AGENTS_SCHEDULER") == "1" if scheduler is None else scheduler
 
     @asynccontextmanager
@@ -144,6 +154,7 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
             sched.stop()
 
     app = FastAPI(title="Agent launch platform", lifespan=lifespan)
+    app.state.credentials = credentials
 
     @app.get("/operations", response_class=HTMLResponse)
     def operations_page():
@@ -180,13 +191,20 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
     def api_agent(name: str) -> dict:
         return _summary(_agent(name))
 
-    @app.post("/api/agents/{name}/invoke", dependencies=[Depends(require_token)])
-    async def api_invoke(
-        name: str, body: InvokeRequest, tenant: str = Depends(require_token)
-    ) -> dict:
+    @app.get("/api/me")
+    def api_me(principal: Caller) -> dict:
+        return {
+            "name": principal.name,
+            "tenant": principal.tenant,
+            "role": principal.role,
+            "may": [p for p in ("run", "read", "review", "approve") if principal.can(p)],
+        }
+
+    @app.post("/api/agents/{name}/invoke")
+    async def api_invoke(name: str, body: InvokeRequest, principal: Runner) -> dict:
         _agent(name)
         try:
-            result = await run_in_threadpool(invoke, name, body.input, tenant=tenant)
+            result = await run_in_threadpool(invoke, name, body.input, tenant=principal.tenant)
         except NotRunnable as e:
             raise HTTPException(409, str(e)) from e
         return {
@@ -200,44 +218,45 @@ def create_app(*, scheduler: bool | None = None) -> FastAPI:
             "latency_s": round(result.latency_s, 3),
         }
 
-    @app.post("/api/agents/{name}/run", dependencies=[Depends(require_token)])
-    async def api_run(name: str, tenant: str = Depends(require_token)) -> dict:
+    @app.post("/api/agents/{name}/run")
+    async def api_run(name: str, principal: Runner) -> dict:
         _agent(name)
         try:
-            return await run_in_threadpool(run_job, name, trigger="api", tenant=tenant)
+            return await run_in_threadpool(run_job, name, trigger="api", tenant=principal.tenant)
         except NotRunnable as e:
             raise HTTPException(409, str(e)) from e
 
-    from agent_platform.production import decisions, execute, measured, review
-
     @app.get("/api/decisions")
-    def api_decisions(tenant: str = Depends(require_token)) -> list[dict]:
-        return decisions(tenant)
+    def api_decisions(principal: Reader) -> list[dict]:
+        return decisions(principal.tenant)
 
     @app.post("/api/decisions/{decision_id}/review")
-    def api_review(decision_id: str, body: ReviewRequest, tenant: str = Depends(require_token)):
+    def api_review(decision_id: str, body: ReviewRequest, principal: Reviewer) -> dict:
+        assert principal.name is not None
         try:
-            review(decision_id, body.correct, body.staff, tenant)
+            review(decision_id, body.correct, principal.name, principal.tenant)
         except LookupError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
-        return {"ok": True}
+        return {"ok": True, "reviewer": principal.name}
 
     @app.post("/api/decisions/{decision_id}/approval")
-    def api_approval(decision_id: str, body: ApprovalRequest, tenant: str = Depends(require_token)):
+    def api_approval(decision_id: str, body: ApprovalRequest, principal: Approver):
         try:
-            return execute(decision_id, tenant, approved_by=body.staff, reject=body.reject)
+            return execute(
+                decision_id, principal.tenant, approved_by=principal.name, reject=body.reject
+            )
         except LookupError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, NotRunnable) as error:
             raise HTTPException(409, str(error)) from error
 
     @app.get("/api/agents/{name}/value")
-    def api_value(name: str, weeks: int = 4, tenant: str = Depends(require_token)):
+    def api_value(name: str, principal: Reader, weeks: int = 4) -> dict:
         _agent(name)
         if weeks < 1:
             raise HTTPException(422, "weeks must be positive")
-        return measured(name, tenant, weeks)
+        return measured(name, principal.tenant, weeks)
 
     return app

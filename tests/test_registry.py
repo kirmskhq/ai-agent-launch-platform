@@ -167,3 +167,45 @@ def test_runtime_dependency_change_invalidates_acceptance(
     # Restoring the exact dependency restores the original acceptance identity.
     path.write_bytes(original)
     assert record(agent).runs
+
+
+def _settle(*folders):
+    """Date every file a minute back, as if it was written long before the request."""
+    import os
+    import time
+
+    past = time.time() - 60
+    for folder in folders:
+        for path in folder.rglob("*"):
+            if path.is_file():
+                os.utime(path, (past, past))
+
+
+def test_record_is_reused_until_a_file_changes(workspace, real_model):
+    agent = make_agent(workspace, "expense-real", model="test-real")
+    accept(agent)
+    _settle(workspace)
+    first = record(agent)
+    assert first.runs
+    assert record(agent) is first
+    graph = agent / "graph.py"
+    graph.write_text(graph.read_text(encoding="utf-8").replace("LIMIT = 1000", "LIMIT = 5000"))
+    assert record(agent).status == "not_accepted"
+
+
+def test_fresh_files_are_never_trusted_to_their_timestamp(workspace):
+    agent = workspace / "agents" / "expense-coder"
+    assert record(agent) is not record(agent)
+
+
+def test_report_removal_and_a_new_day_refresh_the_record(workspace, real_model, monkeypatch):
+    from agent_platform import registry
+
+    agent = make_agent(workspace, "expense-real", model="test-real")
+    accept(agent)
+    _settle(workspace)
+    first = record(agent)
+    monkeypatch.setattr(registry, "_today", lambda: "2999-01-01")
+    assert record(agent) is not first
+    acceptance_report_path("expense-real").unlink()
+    assert record(agent).status == "no_exam"

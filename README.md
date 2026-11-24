@@ -1,8 +1,24 @@
 # AI agent launch platform
 
+[![CI](https://github.com/kirmskhq/ai-agent-launch-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kirmskhq/ai-agent-launch-platform/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+
 A department starts with a process and its cost. The platform checks whether the written
 process is clear enough to automate, examines the agent on past cases, controls what it may
 do, and measures its value after launch.
+
+```mermaid
+flowchart LR
+    A["Proposal<br/>process, volume, cost"] --> B{"Readiness<br/>clear enough<br/>to automate?"}
+    B -- no --> A
+    B -- yes --> C["Agent<br/>passport + code"]
+    C --> D{"Exam<br/>past cases,<br/>real model"}
+    D -- "below the bar<br/>or code changed" --> C
+    D -- passed --> E["Running<br/>within its autonomy"]
+    E --> F["Staff review<br/>and approvals"]
+    F --> G["Measured value<br/>vs. projected"]
+```
 
 Two agents work inside Harbourline Payments, a fictional payments company. Payment
 reconciliation uses rules for exact matches and a model for messy references. Refund requests

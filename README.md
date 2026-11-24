@@ -10,15 +10,10 @@ do, and measures its value after launch.
 
 ```mermaid
 flowchart TD
-    A["Proposal<br/>process, volume, cost"] --> B{"Readiness<br/>clear enough<br/>to automate?"}
-    B -- no --> A
-    B -- yes --> C["Agent<br/>passport + code"]
-    C --> D{"Exam<br/>past cases,<br/>real model"}
-    D -- "below the bar<br/>or code changed" --> C
-    D -- passed --> E["Running<br/>within its autonomy"]
-    E --> F["Staff review<br/>and approvals"]
-    F --> G["Measured value<br/>vs. projected"]
-    G --> H["Owner decides:<br/>scale, redesign or retire"]
+    A["Proposal: process and its cost"] -- "readiness cleared" --> B["Agent: passport and code"]
+    B -- "exam on past cases" --> C["Running under staff review"]
+    C --> D["Measured value: owner scales, redesigns or retires"]
+    C -. "code changed: exam again" .-> B
 ```
 
 Two agents work inside Harbourline Payments, a fictional payments company. Payment

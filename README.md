@@ -77,7 +77,7 @@ only when all three runs were correct.
 
 Both exams contain 40 cases and zero infrastructure failures. The accuracy lower bound uses
 90% one-sided confidence. The run summary and downloadable reports preserve the evidence.
-[Recorded acceptance run](https://github.com/kirmskhq/ai-agent-launch-platform/actions/runs/42999716228).
+[Recorded acceptance run](https://github.com/kirmskhq/ai-agent-launch-platform/actions/runs/45504287408).
 
 A statement line of 1,837.50 with the reference `inv 1201 + 1202 minus fee` names invoices of
 1,200 and 650. The model proposes those invoice IDs. Rules check ownership, amounts and the

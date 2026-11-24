@@ -18,6 +18,7 @@ flowchart TD
     D -- passed --> E["Running<br/>within its autonomy"]
     E --> F["Staff review<br/>and approvals"]
     F --> G["Measured value<br/>vs. projected"]
+    G --> H["Owner decides:<br/>scale, redesign or retire"]
 ```
 
 Two agents work inside Harbourline Payments, a fictional payments company. Payment
@@ -72,17 +73,7 @@ uv run python -m sandbox.mcp_server
 
 ## Example agents and recorded acceptance
 
-```mermaid
-flowchart TD
-    P[Process and baseline] --> R{Readiness}
-    R -->|Build| D[Agent and dev cases]
-    D --> E{Holdout exam}
-    E -->|Pass| A[Actions within policy limits]
-    A --> V[Staff reviews and measured value]
-    V --> O[Owner decides scale, redesign or retire]
-```
-
-The example agents completed acceptance on 11 November 2026 using the synthetic holdout sets.
+The example agents completed acceptance on 24 November 2026 using the synthetic holdout sets.
 Counts below are cases. Each case ran three times, and an answered case counts as correct
 only when all three runs were correct.
 

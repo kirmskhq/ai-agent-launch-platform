@@ -9,6 +9,13 @@ reconciliation uses rules for exact matches and a model for messy references. Re
 use a model to read the customer's reason and rules to apply the refund policy. All example
 business data, readiness observations and case labels are synthetic.
 
+The catalogue lists every agent with its exam result, the accuracy it needs and its projected
+monthly effect. Each agent has a page with its baseline, autonomy and measured value.
+
+![Agent catalogue](docs/screenshots/catalogue.jpg)
+
+![Agent page](docs/screenshots/agent.jpg)
+
 ## Quick start without a model key
 
 Install Python 3.12 or later and [uv](https://docs.astral.sh/uv/getting-started/installation/).
